@@ -50,6 +50,28 @@ def tools_ready() -> bool:
     return bool(find_tool("ffmpeg") and find_tool("ffprobe"))
 
 
+def _failure_detail(
+    result: subprocess.CompletedProcess[str],
+    source: Path,
+    target: Path | None = None,
+) -> str:
+    """把外部工具的失败原因说清楚。
+
+    FFmpeg 自己的报错最有用；它一声不吭时（进程被打断、崩溃、被安全软件拦下
+    都会这样），退出代码和输入文件大小就是仅剩的线索，一并带上便于排查。
+    """
+
+    detail = result.stderr.strip()
+    if detail:
+        return detail
+
+    size = f"{source.stat().st_size / 1024 / 1024:.1f} MB" if source.is_file() else "文件已不存在"
+    if result.returncode == 0:
+        missing = f"，也没有生成 {target.name}" if target is not None else ""
+        return f"FFmpeg 正常退出但没有结果{missing}（输入 {source.name}，{size}）"
+    return f"FFmpeg 异常退出（代码 {result.returncode}，输入 {source.name}，{size}），没有输出错误信息"
+
+
 def probe_media(path: Path) -> MediaInfo:
     ffprobe = find_tool("ffprobe")
     if not ffprobe:
@@ -74,7 +96,7 @@ def probe_media(path: Path) -> MediaInfo:
         check=False,
     )
     if result.returncode != 0:
-        raise MediaToolError(result.stderr.strip() or "无法读取媒体信息")
+        raise MediaToolError(f"无法读取媒体信息：{_failure_detail(result, path)}")
 
     payload = json.loads(result.stdout or "{}")
     format_info = payload.get("format") or {}
@@ -120,7 +142,7 @@ def convert_to_wav(source: Path, destination: Path) -> Path:
         check=False,
     )
     if result.returncode != 0 or not destination.exists():
-        raise MediaToolError(result.stderr.strip() or "FFmpeg 音轨转换失败")
+        raise MediaToolError(f"FFmpeg 音轨转换失败：{_failure_detail(result, source, destination)}")
     return destination
 
 

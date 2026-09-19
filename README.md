@@ -4,7 +4,7 @@
 
 ## 下载使用
 
-到 [Releases](https://github.com/splexuan/video-transcript-workbench/releases/latest) 下载 `video-transcript-workbench-v0.1.0-win64.zip`，解压后双击目录里的 `文案工作台.exe`。
+到 [Releases](https://github.com/splexuan/video-transcript-workbench/releases/latest) 下载最新的 `video-transcript-workbench-*-win64.zip`，解压后双击目录里的 `文案工作台.exe`。
 
 - **免安装**：压缩包内已包含 Python 运行时与 FFmpeg，不需要另外装环境；也不需要管理员权限
 - **首次使用**：到「模型管理」页下载一个语音识别模型（数百 MB 到 1 GB，取决于所选模型，仅需一次）；要提取平台视频的话，再去「平台连接」配置对应平台的登录态

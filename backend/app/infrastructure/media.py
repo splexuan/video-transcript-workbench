@@ -15,11 +15,14 @@ class MediaToolError(RuntimeError):
 
 
 def find_tool(name: str) -> str | None:
-    """按顺序找外部工具：环境变量指定目录 → 打包资源目录 → exe 同目录 → PATH。
+    """按顺序找外部工具：环境变量指定目录 → 打包资源目录 → exe 同目录 → 项目内 vendor → PATH。
 
     打包版把 ffmpeg.exe / ffprobe.exe 放在 PyInstaller 的资源目录（`sys._MEIPASS`，
     onedir 下是 exe 同级的 `_internal`），用户无需另行安装 FFmpeg；
     把 ffmpeg.exe 直接放到 exe 旁边（或设好 `VTW_FFMPEG_DIR`）同样有效。
+
+    源码运行时没有资源目录，额外搜索仓库里的 `backend/vendor/ffmpeg/`——那是打包时
+    固定 FFmpeg 版本用的位置，开发时把两个 exe 放进去，本地文件提取就能直接用。
     """
 
     roots: list[Path] = []
@@ -31,6 +34,9 @@ def find_tool(name: str) -> str | None:
         roots.append(Path(bundle))
     if getattr(sys, "frozen", False):
         roots.append(Path(sys.executable).parent)
+    else:
+        # 本文件在 backend/app/infrastructure/ 下：parents[2] 即 backend
+        roots.append(Path(__file__).resolve().parents[2] / "vendor" / "ffmpeg")
 
     for root in roots:
         for filename in (f"{name}.exe", name):

@@ -1,0 +1,55 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / 前端构建产物
+node_modules/
+frontend/dist/
+dist/
+build/
+*.spec
+# 打包配置是项目文件，需要入库
+!backend/文案工作台.spec
+
+# 数据库与本地配置
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# 打包用的第三方可执行文件（FFmpeg 等，体积大且可再获取，不入库）
+backend/vendor/
+
+# 本地 wheel 缓存
+.pipcache/
+_pipcache/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 运行日志与走查产物
+*.log
+output/playwright/
+output/ui-redesign/
+.playwright-cli/
+
+# AI 协作过程记录：本地保留，不随仓库分发
+.planning/
+findings.md
+progress.md
+task_plan.md
+# 内部文档：对外说明集中在 README
+docs/
+
+.workbuddy/
+.tmp/

@@ -19,7 +19,7 @@ def default_data_dir() -> Path:
 
 class Settings(BaseSettings):
     app_name: str = "文案工作台"
-    app_version: str = "0.1.0"
+    app_version: str = "0.1.1"
     data_dir: Path = default_data_dir()
     worker_enabled: bool = True
     upload_max_mb: int = 4096

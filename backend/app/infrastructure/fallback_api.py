@@ -1,17 +1,20 @@
 """兜底解析接口（BugPk-Api）：主链路都失败时，换第三方接口拿无水印直链。
 
 自建解析（快手、小红书分享页）与 yt-dlp 都可能因为平台风控、登录态失效或
-页面结构变化而失败。这里接的是 BugPk-Api 的公开网关：
+页面结构变化而失败。这里接的是 BugPk-Api 的公开网关（已内置，不需要配环境变量）：
 
     GET {base}/api/svparse?url=<作品链接>      # 短视频解析聚合（API Code: svparse）
     X-API-Key: <在「设置」页配置的 Key>          # 也支持 ?key= 查询参数
+
+API Key 由使用者在 https://api-new.ifphp.com/ 注册账号后自行获取。
 
 按平台分路：文档称聚合端点覆盖 33+ 平台，但实测 B站 走 `/api/svparse` 返回
 502「请求失败」，走 `/api/bilibili` 才正常，因此各平台优先用它的专属端点，
 失败再退回聚合端点。
 
 设计要点：
-- 只在主链路失败后使用；没配置 Key 时本模块完全不参与，主链路行为不变。
+- 视频号没有本机解析方案，只能走这里；其它平台仅在主链路失败后使用。
+- 没配置 Key 时本模块不参与，其它平台行为与接入前完全一致。
 - Key 由调用方传入（存在设置里、本机加密保存），本模块不读配置、不写日志明文。
 - 接口返回的是**带时效签名的直链**，只能现取现用，不能跨任务缓存。
 - 字段名与文档并不完全一致（B站的作者字段是 `auther`、快手把作者放在
@@ -31,9 +34,12 @@ from app.domain import MediaInfo
 
 logger = logging.getLogger(__name__)
 
-# 网关地址由使用者通过环境变量指定。这里不内置任何第三方服务地址：
-# 本项目开源分发，不该把使用者的问题直接引到某一家公益/商业接口上。
-BASE_URL = os.getenv("VTW_FALLBACK_API_BASE", "").rstrip("/")
+# 内置的兜底解析网关（BugPk-Api）：源码运行与打包版都直接用这个地址，
+# 使用者只需要去 https://api-new.ifphp.com/ 注册账号、把 Key 填进「设置」页。
+BUILTIN_BASE_URL = "https://api-new.ifphp.com"
+# 换域名不用改代码：环境变量覆盖即可。变量缺失、为空或只有空白时仍回落内置网关，
+# 免得一个环境变量就让「只能走兜底」的视频号整条链路报「没有配置兜底解析网关」。
+BASE_URL = (os.getenv("VTW_FALLBACK_API_BASE") or "").strip().rstrip("/") or BUILTIN_BASE_URL
 # 文档里的公开网关：短视频解析聚合
 AGGREGATE_PATH = "/api/svparse"
 # 各平台的专属端点（实测更可靠）；按顺序尝试，最后退回聚合端点
@@ -240,8 +246,10 @@ def resolve(url: str, api_key: str, platform: str | None = None) -> FallbackMedi
     """
 
     if not BASE_URL:
+        # 正常不会走到这里：BASE_URL 有内置网关兜底，只有被外部改写成空串时才会命中。
+        # 留这道防线是为了不发请求到空地址，报错里保留环境变量名方便定位。
         raise FallbackError(
-            "没有配置兜底解析网关：设置 VTW_FALLBACK_API_BASE 环境变量后才会启用兜底解析"
+            "兜底解析网关地址为空（内置网关未生效）：请检查 VTW_FALLBACK_API_BASE 环境变量"
         )
     paths = PLATFORM_PATHS.get(platform or "", DEFAULT_PATHS)
     first_error: FallbackError | None = None

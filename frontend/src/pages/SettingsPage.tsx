@@ -92,7 +92,7 @@ export function SettingsPage() {
           <div className="setting-row">
             <span>
               <label htmlFor="fallback-api-key"><strong>兜底解析接口 API Key</strong></label>
-              <small>自建解析和 yt-dlp 都拿不到视频时（多为平台风控），改用第三方聚合接口取无水印直链继续识别。留空则只用本机解析；Key 加密保存在本机，不会回传到界面。</small>
+              <small>自建解析和 yt-dlp 都拿不到视频时（多为平台风控），改用第三方聚合接口取无水印直链继续识别；视频号只能走这条通道，必须配置。还没有 Key 可以到 <a href="https://api-new.ifphp.com/" target="_blank" rel="noreferrer">api-new.ifphp.com</a> 注册账号获取；留空则只用本机解析，Key 加密保存在本机、不会回传到界面。</small>
             </span>
             <div className="setting-control">
               <div className="api-key-field">

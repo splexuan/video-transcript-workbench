@@ -2088,6 +2088,12 @@ span.task-exec-cover {
   color: var(--text-muted);
   font-size: var(--text-xs);
 }
+/* 设置说明里的外链（如兜底解析的注册地址）：用主色，别让浏览器默认蓝跳出这套配色 */
+.setting-row small a,
+.toggle-row small a {
+  color: var(--primary);
+  font-weight: var(--weight-medium);
+}
 .setting-control {
   display: grid;
   flex: 0 0 auto;

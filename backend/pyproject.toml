@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "video-transcript-workbench"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local-first video transcript workbench"
 # 上界不是保守：ctranslate2 4.6 起在部分 Windows/CPU 环境加载模型会崩溃，依赖被限制在
 # <4.6，而该版本只发到 cp312。允许 3.13+ 只会让「精准时间轴」静默装不上（或被迫用有问题的版本）。

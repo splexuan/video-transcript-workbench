@@ -1,4 +1,5 @@
 import { Film, FileText, RotateCcw } from 'lucide-react'
+import { Link } from 'react-router-dom'
 
 import { PlatformBadge } from './PlatformBadge'
 import { api } from '../lib/api'
@@ -98,7 +99,12 @@ export function TaskExecution({
           <FileText size={15} /> 查看文案
         </button>
       )}
-      {job.status !== 'completed' && job.status !== 'queued' && job.status !== 'running' && (
+      {job.batch_id && job.status !== 'completed' && job.status !== 'queued' && job.status !== 'running' && (
+        <Link className="text-button task-exec-open" to={`/jobs?batch=${job.batch_id}`}>
+          查看所属批次
+        </Link>
+      )}
+      {!job.batch_id && job.status !== 'completed' && job.status !== 'queued' && job.status !== 'running' && (
         <button className="text-button task-exec-open" type="button" onClick={() => onRetry(job.id)}>
           <RotateCcw size={15} /> 重新提取
         </button>

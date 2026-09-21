@@ -16,17 +16,29 @@ from app.application.exporters import export_document
 from app.application.services import (
     TERMINAL_JOB_STATUSES,
     DocumentInUseError,
+    JobBatchControlError,
+    JobBatchIdempotencyConflict,
+    JobBatchValidationError,
     JobRetryError,
     auto_format_segments,
+    cancel_job_batch,
     create_job,
+    create_job_batch,
     delete_document,
     delete_job_record,
     find_document_media,
     get_document,
+    get_job_batch,
     list_documents,
+    list_job_batches,
+    pause_job_batch,
+    preflight_job_batch,
     read_settings,
     replace_segments,
+    resume_job_batch,
+    retry_failed_job_batch,
     retry_job,
+    serialize_job_batch,
     update_settings,
 )
 from app.config import settings
@@ -36,11 +48,16 @@ from app.infrastructure.credential_store import all_status
 from app.infrastructure.database import get_session
 from app.infrastructure.media import tools_ready
 from app.infrastructure.model_catalog import require_spec
-from app.infrastructure.models import Document, Job
+from app.infrastructure.models import Document, Job, JobBatch
 from app.schemas import (
     DocumentDetail,
     DocumentRead,
     DocumentUpdate,
+    JobBatchCreate,
+    JobBatchDetailRead,
+    JobBatchPreflightRead,
+    JobBatchPreflightRequest,
+    JobBatchRead,
     JobCreate,
     JobRead,
     SegmentsReplace,
@@ -90,6 +107,87 @@ def enqueue_job(payload: JobCreate, session: SessionDep) -> Job:
         raise HTTPException(status_code=400, detail="本地文件必须通过文件选择器导入")
     payload.model_id = validated_model_id(payload.model_id)
     return create_job(session, payload)
+
+
+@router.post("/job-batches/preflight", response_model=JobBatchPreflightRead)
+def preflight_batch(payload: JobBatchPreflightRequest) -> JobBatchPreflightRead:
+    return preflight_job_batch(payload.sources)
+
+
+@router.post(
+    "/job-batches",
+    response_model=JobBatchDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def enqueue_job_batch(payload: JobBatchCreate, session: SessionDep) -> JobBatchDetailRead:
+    payload.model_id = validated_model_id(payload.model_id)
+    try:
+        batch = create_job_batch(session, payload)
+    except JobBatchValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except JobBatchIdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.get("/job-batches", response_model=list[JobBatchRead])
+def get_job_batches(
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> list[JobBatchRead]:
+    return [serialize_job_batch(batch) for batch in list_job_batches(session, limit)]
+
+
+def _job_batch_or_404(session: Session, batch_id: str) -> JobBatch:
+    batch = get_job_batch(session, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return batch
+
+
+@router.get("/job-batches/{batch_id}", response_model=JobBatchDetailRead)
+def job_batch_detail(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    return serialize_job_batch(_job_batch_or_404(session, batch_id), include_jobs=True)
+
+
+@router.post("/job-batches/{batch_id}/pause", response_model=JobBatchDetailRead)
+def pause_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = pause_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.post("/job-batches/{batch_id}/resume", response_model=JobBatchDetailRead)
+def resume_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = resume_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.post("/job-batches/{batch_id}/cancel", response_model=JobBatchDetailRead)
+def cancel_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = cancel_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.post(
+    "/job-batches/{batch_id}/retry-failed",
+    response_model=JobBatchDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def retry_failed_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = retry_failed_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
 
 
 @router.post("/jobs/upload", response_model=JobRead, status_code=status.HTTP_201_CREATED)
@@ -159,6 +257,8 @@ def retry_failed_job(job_id: str, session: SessionDep) -> Job:
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if job.batch_id:
+        raise HTTPException(status_code=400, detail="批次子任务请在所属批次中统一重试")
     if job.status not in TERMINAL_JOB_STATUSES:
         raise HTTPException(status_code=400, detail="任务还在进行中，不需要重试")
     try:
@@ -172,6 +272,8 @@ def cancel_job(job_id: str, session: SessionDep) -> Job:
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if job.batch_id:
+        raise HTTPException(status_code=400, detail="批次子任务请在所属批次中统一取消")
     if job.status not in {"completed", "failed", "cancelled"}:
         job.status = "cancelled"
         job.message = "已取消"
@@ -186,6 +288,8 @@ def remove_job(job_id: str, session: SessionDep) -> dict[str, str | bool]:
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if job.batch_id:
+        raise HTTPException(status_code=400, detail="批次子任务会随批次保留，不能单独删除")
     if job.status not in TERMINAL_JOB_STATUSES:
         raise HTTPException(status_code=400, detail="任务还在进行中，请先取消再删除")
     delete_job_record(session, job)

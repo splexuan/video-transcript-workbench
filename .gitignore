@@ -45,6 +45,7 @@ output/ui-redesign/
 
 # AI 协作过程记录：本地保留，不随仓库分发
 .planning/
+.ai-memory/
 findings.md
 progress.md
 task_plan.md

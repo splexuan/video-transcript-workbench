@@ -68,8 +68,29 @@ class TranscriptSegment(Base):
     document: Mapped[Document] = relationship(back_populates="segments")
 
 
+class JobBatch(Base):
+    __tablename__ = "job_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    title: Mapped[str] = mapped_column(String(300), default="批量提取")
+    kind: Mapped[str] = mapped_column(String(16), default="url")
+    control_status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    expected_count: Mapped[int] = mapped_column(Integer)
+    client_request_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    parent_batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+    jobs: Mapped[list[Job]] = relationship(
+        back_populates="batch",
+        order_by="Job.batch_position",
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (Index("ix_job_batch_position", "batch_id", "batch_position"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     document_id: Mapped[str | None] = mapped_column(
@@ -77,6 +98,13 @@ class Job(Base):
         nullable=True,
         index=True,
     )
+    batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("job_batches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    batch_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
     platform: Mapped[str] = mapped_column(String(32), default="unknown")
     source_type: Mapped[str] = mapped_column(String(16))
     source_value: Mapped[str] = mapped_column(Text)
@@ -100,6 +128,7 @@ class Job(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
 
     document: Mapped[Document | None] = relationship(back_populates="jobs")
+    batch: Mapped[JobBatch | None] = relationship(back_populates="jobs")
 
 
 class AppSetting(Base):
@@ -108,4 +137,3 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
-

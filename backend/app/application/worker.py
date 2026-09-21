@@ -5,7 +5,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.application.services import read_fallback_api_key, read_settings, safe_unlink_upload
@@ -31,7 +31,7 @@ from app.infrastructure.database import SessionLocal
 from app.infrastructure.media import MediaToolError, convert_to_wav, probe_media
 from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.model_store import ensure_engine_ready, ensure_model_ready
-from app.infrastructure.models import Document, Job, TranscriptSegment
+from app.infrastructure.models import Document, Job, JobBatch, TranscriptSegment
 from app.infrastructure.platform_media import (
     PlatformError,
     download_audio_source,
@@ -211,8 +211,12 @@ class LocalWorker:
         with SessionLocal() as session:
             job = session.scalar(
                 select(Job)
-                .where(Job.status == JobStatus.QUEUED.value)
-                .order_by(Job.created_at.asc())
+                .outerjoin(JobBatch, Job.batch_id == JobBatch.id)
+                .where(
+                    Job.status == JobStatus.QUEUED.value,
+                    or_(Job.batch_id.is_(None), JobBatch.control_status == "active"),
+                )
+                .order_by(Job.created_at.asc(), Job.batch_position.asc())
                 .limit(1)
             )
             if not job:

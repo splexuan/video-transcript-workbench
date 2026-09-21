@@ -589,6 +589,34 @@ button:disabled {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
+.capture-mode-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin: -2px 0 16px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+.capture-mode-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.capture-mode-switch button.active {
+  color: var(--primary);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
 
 .source-input-wrap {
   display: grid;
@@ -618,6 +646,73 @@ button:disabled {
   outline: 0;
   border-color: var(--primary);
   box-shadow: var(--focus-ring);
+}
+.batch-source-wrap {
+  display: grid;
+  gap: 10px;
+}
+.batch-source-wrap > label {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+.batch-source-wrap textarea {
+  width: 100%;
+  min-height: 164px;
+  resize: vertical;
+  padding: 13px 15px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+.batch-source-wrap textarea:focus {
+  outline: 0;
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring);
+}
+.batch-submit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.batch-submit-row > span,
+.batch-file-note {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.batch-preflight {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.batch-preflight.valid {
+  color: var(--success);
+}
+.batch-preflight.issues {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.batch-preflight.issues p {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-weight: var(--weight-medium);
+}
+.batch-preflight.issues ul {
+  margin: 7px 0 0 22px;
+  padding: 0;
 }
 
 .primary-button,
@@ -1433,6 +1528,180 @@ span.task-exec-cover {
 
 .jobs-page-panel {
   padding: 6px 12px;
+}
+.batch-card {
+  margin: 12px 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-subtle);
+}
+.batch-card-head,
+.batch-card-foot,
+.batch-actions,
+.batch-progress-row {
+  display: flex;
+  align-items: center;
+}
+.batch-card-head {
+  gap: 12px;
+}
+.batch-expand {
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface);
+}
+.batch-title {
+  display: grid;
+  flex: 1;
+  gap: 5px;
+  min-width: 0;
+}
+.batch-title strong {
+  overflow: hidden;
+  font-size: var(--text-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-title small,
+.batch-card-foot > span {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.batch-progress-row {
+  gap: 12px;
+  margin-top: 13px;
+}
+.batch-progress-row .progress-track {
+  flex: 1;
+  margin: 0;
+}
+.batch-progress-row > span {
+  width: 38px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.batch-card-foot {
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+.batch-actions {
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.batch-children {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.batch-child-row {
+  display: grid;
+  grid-template-columns: 10px 34px minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--text-xs);
+}
+.batch-child-position,
+.batch-loading {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.batch-child-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.batch-child-heading,
+.batch-child-detail,
+.batch-child-progress,
+.batch-child-stalled {
+  display: flex;
+  align-items: center;
+}
+.batch-child-heading {
+  gap: 8px;
+  min-width: 0;
+}
+.batch-child-title {
+  min-width: 0;
+  font-weight: var(--weight-medium);
+}
+.batch-child-detail {
+  gap: 6px 10px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.batch-child-stage {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+}
+.batch-child-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-child-detail time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.batch-child-progress {
+  gap: 9px;
+}
+.batch-child-progress .progress-track {
+  flex: 1;
+  margin: 0;
+}
+.batch-child-progress > span {
+  width: 34px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.batch-child-stalled {
+  gap: 6px;
+  margin: 0;
+  color: var(--warning);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+}
+.batch-child-stalled svg {
+  flex: 0 0 auto;
+}
+.batch-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px;
+}
+.status-chip.paused {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+.status-chip.partial_failed,
+.status-chip.cancelled {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 .job-card {
   padding: 17px 12px;
@@ -3026,6 +3295,18 @@ button.timecode:hover:not(:disabled) {
   .source-input-wrap .primary-button {
     min-height: var(--control-lg);
   }
+  .capture-mode-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .batch-submit-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .batch-submit-row .primary-button {
+    min-height: var(--control-lg);
+  }
   .capture-options {
     align-items: flex-start;
     flex-direction: column;
@@ -3218,6 +3499,48 @@ button.timecode:hover:not(:disabled) {
   .job-card-actions .job-delete {
     width: 44px;
     height: 44px;
+  }
+  .batch-card-head,
+  .batch-card-foot {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .batch-title {
+    min-width: calc(100% - 64px);
+  }
+  .batch-card-head > .status-chip {
+    margin-left: 52px;
+  }
+  .batch-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .batch-actions .text-button {
+    min-height: 44px;
+  }
+  .batch-child-row {
+    grid-template-columns: 10px 30px minmax(0, 1fr);
+    align-items: start;
+  }
+  .batch-child-row .platform-badge {
+    display: none;
+  }
+  .batch-child-main {
+    grid-column: 3;
+  }
+  .batch-child-detail {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .batch-child-message {
+    overflow: visible;
+    white-space: normal;
+  }
+  .batch-child-row .text-button,
+  .batch-child-row .status-chip {
+    grid-column: 3;
+    justify-self: start;
   }
   .setting-row,
   .toggle-row {

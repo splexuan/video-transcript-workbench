@@ -6,6 +6,9 @@ import type {
   DocumentSummary,
   InstallProgress,
   Job,
+  JobBatch,
+  JobBatchDetail,
+  JobBatchPreflight,
   LoginStatus,
   ModelCatalog,
   RecognitionModel,
@@ -31,6 +34,32 @@ export const api = {
   jobs: (limit = 50) => request<Job[]>(`/api/jobs?limit=${limit}`),
   createJob: (payload: { source_type: 'url' | 'file'; source: string; mode: string; model_id?: string | null; prefer_subtitle?: boolean }) =>
     request<Job>('/api/jobs', { method: 'POST', body: JSON.stringify(payload) }),
+  preflightBatch: (sources: string[]) =>
+    request<JobBatchPreflight>('/api/job-batches/preflight', {
+      method: 'POST',
+      body: JSON.stringify({ sources }),
+    }),
+  createBatch: (payload: {
+    title?: string
+    sources: string[]
+    mode: string
+    model_id?: string | null
+    prefer_subtitle?: boolean
+    client_request_id: string
+  }) => request<JobBatchDetail>('/api/job-batches', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  batches: (limit = 20) => request<JobBatch[]>(`/api/job-batches?limit=${limit}`),
+  batch: (id: string) => request<JobBatchDetail>(`/api/job-batches/${id}`),
+  pauseBatch: (id: string) =>
+    request<JobBatchDetail>(`/api/job-batches/${id}/pause`, { method: 'POST' }),
+  resumeBatch: (id: string) =>
+    request<JobBatchDetail>(`/api/job-batches/${id}/resume`, { method: 'POST' }),
+  cancelBatch: (id: string) =>
+    request<JobBatchDetail>(`/api/job-batches/${id}/cancel`, { method: 'POST' }),
+  retryFailedBatch: (id: string) =>
+    request<JobBatchDetail>(`/api/job-batches/${id}/retry-failed`, { method: 'POST' }),
   uploadJob: async (file: File, mode: string, modelId?: string | null, preferSubtitle = false) => {
     const form = new FormData()
     form.append('file', file)

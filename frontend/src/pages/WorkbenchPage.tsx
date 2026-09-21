@@ -1,4 +1,4 @@
-import { ArrowRight, FileUp, Link2, LoaderCircle, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowRight, CircleCheck, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react'
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -8,7 +8,7 @@ import { TaskExecution } from '../components/TaskExecution'
 import { api } from '../lib/api'
 import { jobDisplayTitle } from '../lib/jobDisplay'
 import { shortModelName } from '../lib/labels'
-import type { DocumentSummary, Job, ModelCatalog, RecognitionModel } from '../types'
+import type { DocumentSummary, Job, JobBatchPreflight, ModelCatalog, RecognitionModel } from '../types'
 
 function timeLabel(value: string) {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -22,6 +22,10 @@ function sizeLabel(bytes: number) {
     : `${Math.round(bytes / 1024 ** 2)} MB`
 }
 
+function batchLines(value: string) {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+}
+
 /** 卡片副标题：这个模型是什么模式、时间轴多细、多大。 */
 function modelSubtitle(model: RecognitionModel) {
   const kind = model.tier === 'fast' ? '极速文本' : '精准时间轴'
@@ -33,7 +37,12 @@ function modelSubtitle(model: RecognitionModel) {
 }
 
 export function WorkbenchPage() {
+  const [captureMode, setCaptureMode] = useState<'single' | 'batch'>('single')
   const [source, setSource] = useState('')
+  const [batchSource, setBatchSource] = useState('')
+  const [batchPreflight, setBatchPreflight] = useState<JobBatchPreflight | null>(null)
+  const [preflighting, setPreflighting] = useState(false)
+  const [preflightError, setPreflightError] = useState('')
   const [modelId, setModelId] = useState('')
   const [preferSubtitle, setPreferSubtitle] = useState(true)
   const [jobs, setJobs] = useState<Job[]>([])
@@ -47,6 +56,7 @@ export function WorkbenchPage() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [createdBatchId, setCreatedBatchId] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -62,6 +72,36 @@ export function WorkbenchPage() {
     const timer = window.setInterval(load, 1600)
     return () => { active = false; window.clearInterval(timer) }
   }, [])
+
+  useEffect(() => {
+    if (captureMode !== 'batch') return
+    const sources = batchLines(batchSource)
+    if (sources.length === 0 || sources.length > 50) return
+    let active = true
+    const timer = window.setTimeout(() => {
+      setPreflighting(true)
+      setPreflightError('')
+      void api.preflightBatch(sources)
+        .then((result) => active && setBatchPreflight(result))
+        .catch((reason: Error) => active && setPreflightError(reason.message))
+        .finally(() => active && setPreflighting(false))
+    }, 350)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [batchSource, captureMode])
+
+  function selectCaptureMode(next: 'single' | 'batch') {
+    setCaptureMode(next)
+    setBatchPreflight(null)
+    setPreflightError('')
+    setPreflighting(false)
+  }
+
+  function changeBatchSource(value: string) {
+    setBatchSource(value)
+    setBatchPreflight(null)
+    setPreflightError('')
+    setPreflighting(false)
+  }
 
   useEffect(() => {
     let active = true
@@ -101,11 +141,30 @@ export function WorkbenchPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (!source.trim()) return
+    const sources = batchLines(batchSource)
+    if (captureMode === 'single' && !source.trim()) return
+    if (captureMode === 'batch' && (!batchPreflight?.can_submit || sources.length === 0)) return
     setSubmitting(true)
     setError('')
     setNotice('')
+    setCreatedBatchId('')
     try {
+      if (captureMode === 'batch') {
+        const created = await api.createBatch({
+          sources,
+          mode: submitMode(),
+          model_id: modelId || null,
+          prefer_subtitle: preferSubtitle,
+          client_request_id: crypto.randomUUID(),
+        })
+        setJobs((current) => [...created.jobs, ...current].slice(0, 4))
+        setFocusedJobId(created.jobs[0]?.id ?? '')
+        setBatchSource('')
+        setBatchPreflight(null)
+        setCreatedBatchId(created.id)
+        setNotice(`已创建批次，共 ${created.total_count} 条链接。`)
+        return
+      }
       const created = await api.createJob({
         source_type: 'url',
         source,
@@ -181,25 +240,89 @@ export function WorkbenchPage() {
             <p>支持 B站、抖音、快手、小红书、视频号的链接或分享文案，也可以导入本地音视频文件</p>
           </div>
         </div>
+        <div className="capture-mode-switch" role="radiogroup" aria-label="提取方式">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={captureMode === 'single'}
+            className={captureMode === 'single' ? 'active' : ''}
+            onClick={() => selectCaptureMode('single')}
+          >
+            <Link2 size={16} /> 单条提取
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={captureMode === 'batch'}
+            className={captureMode === 'batch' ? 'active' : ''}
+            onClick={() => selectCaptureMode('batch')}
+          >
+            <ListPlus size={16} /> 批量提取
+          </button>
+        </div>
         <form onSubmit={submit}>
-          <label className="sr-only" htmlFor="source-url">视频链接或分享文案</label>
-          <div className="source-input-wrap">
-            {/* 用 text 而不是 url：App 里复制出来的整段分享文案含中文，
-                浏览器的 url 校验会直接拦下提交；链接由后端从文案里提取。 */}
-            <input
-              id="source-url"
-              type="text"
-              value={source}
-              onChange={(event) => setSource(event.target.value)}
-              placeholder="粘贴 B站、抖音、快手、小红书、视频号链接或分享文案"
-              autoComplete="off"
-              required
-            />
-            <button className="primary-button" type="submit" disabled={submitting || !source.trim()}>
-              {submitting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}
-              {submitting ? '正在提交' : '开始提取'}
-            </button>
-          </div>
+          {captureMode === 'single' ? (
+            <>
+              <label className="sr-only" htmlFor="source-url">视频链接或分享文案</label>
+              <div className="source-input-wrap">
+                {/* 用 text 而不是 url：App 里复制出来的整段分享文案含中文，
+                    浏览器的 url 校验会直接拦下提交；链接由后端从文案里提取。 */}
+                <input
+                  id="source-url"
+                  type="text"
+                  value={source}
+                  onChange={(event) => setSource(event.target.value)}
+                  placeholder="粘贴 B站、抖音、快手、小红书、视频号链接或分享文案"
+                  autoComplete="off"
+                  required
+                />
+                <button className="primary-button" type="submit" disabled={submitting || !source.trim()}>
+                  {submitting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}
+                  {submitting ? '正在提交' : '开始提取'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="batch-source-wrap">
+              <label htmlFor="batch-source">每行粘贴一条视频链接或分享文案</label>
+              <textarea
+                id="batch-source"
+                value={batchSource}
+                onChange={(event) => changeBatchSource(event.target.value)}
+                placeholder={'https://www.bilibili.com/video/...\nhttps://v.douyin.com/...\n每行一条，最多 50 条'}
+                rows={7}
+              />
+              <div className="batch-submit-row">
+                <span>{batchLines(batchSource).length}/50 条</span>
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={submitting || preflighting || !batchPreflight?.can_submit}
+                >
+                  {submitting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}
+                  {submitting ? '正在创建批次' : `开始批量提取${batchPreflight?.can_submit ? `（${batchPreflight.valid_count}）` : ''}`}
+                </button>
+              </div>
+              {preflighting && <p className="batch-preflight pending"><LoaderCircle className="spin" size={15} /> 正在检查链接…</p>}
+              {!preflighting && batchPreflight?.can_submit && (
+                <p className="batch-preflight valid"><CircleCheck size={15} /> {batchPreflight.valid_count} 条链接均可提交</p>
+              )}
+              {!preflighting && batchPreflight && !batchPreflight.can_submit && (
+                <div className="batch-preflight issues" role="alert">
+                  <p><TriangleAlert size={15} /> 请先修正以下条目</p>
+                  <ul>
+                    {batchPreflight.items.filter((item) => item.status !== 'valid').map((item) => (
+                      <li key={`${item.position}-${item.status}`}>第 {item.position} 行：{item.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {batchLines(batchSource).length > 50 && (
+                <p className="batch-preflight issues" role="alert"><TriangleAlert size={15} /> 单个批次最多 50 条，请拆成多个批次提交。</p>
+              )}
+              {preflightError && <p className="batch-preflight issues" role="alert"><TriangleAlert size={15} /> {preflightError}</p>}
+            </div>
+          )}
           <div className="capture-options">
             <details className="model-picker-disclosure">
               <summary><span>识别模型</span><strong>{selectedModel ? shortModelName(selectedModel.name) : '尚未选择'}</strong><small>更换</small></summary>
@@ -237,10 +360,12 @@ export function WorkbenchPage() {
               accept="audio/*,video/*,.mkv,.flac,.opus"
               onChange={upload}
             />
-            <button className="file-button" type="button" onClick={() => fileInput.current?.click()} disabled={uploading}>
-              {uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />}
-              {uploading ? '正在导入' : '导入本地文件'}
-            </button>
+            {captureMode === 'single' ? (
+              <button className="file-button" type="button" onClick={() => fileInput.current?.click()} disabled={uploading}>
+                {uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />}
+                {uploading ? '正在导入' : '导入本地文件'}
+              </button>
+            ) : <span className="batch-file-note">首版批量模式仅支持链接</span>}
           </div>
           <div className="subtitle-toggle">
             {/* 只有这一行是控件区，下面的说明是纯文本，读说明时不会误触 */}
@@ -274,7 +399,11 @@ export function WorkbenchPage() {
             </p>
           )}
           {error && <p className="form-message error" role="alert">{error}</p>}
-          {notice && <p className="form-message success" role="status">{notice}</p>}
+          {notice && (
+            <p className="form-message success" role="status">
+              {notice} {createdBatchId && <Link to={`/jobs?batch=${createdBatchId}`}>查看批次</Link>}
+            </p>
+          )}
         </form>
       </section>
 

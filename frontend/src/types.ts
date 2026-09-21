@@ -3,6 +3,9 @@ export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancell
 export interface Job {
   id: string
   document_id: string | null
+  batch_id: string | null
+  batch_position: number | null
+  display_name: string | null
   platform: string
   source_type: 'url' | 'file'
   source_value: string
@@ -20,6 +23,48 @@ export interface Job {
   error_message: string | null
   created_at: string
   updated_at: string
+}
+
+export type JobBatchStatus = 'queued' | 'running' | 'paused' | 'completed' | 'partial_failed' | 'failed' | 'cancelled'
+
+export interface JobBatchPreflightItem {
+  position: number
+  raw_source: string
+  normalized_source: string | null
+  platform: string
+  status: 'valid' | 'duplicate' | 'unsupported'
+  message: string
+}
+
+export interface JobBatchPreflight {
+  total_count: number
+  valid_count: number
+  duplicate_count: number
+  unsupported_count: number
+  can_submit: boolean
+  items: JobBatchPreflightItem[]
+}
+
+export interface JobBatch {
+  id: string
+  title: string
+  kind: string
+  control_status: 'active' | 'paused' | 'cancelled'
+  status: JobBatchStatus
+  progress: number
+  total_count: number
+  queued_count: number
+  running_count: number
+  completed_count: number
+  failed_count: number
+  cancelled_count: number
+  parent_batch_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface JobBatchDetail extends JobBatch {
+  jobs: Job[]
 }
 
 export interface DocumentSummary {
@@ -168,4 +213,3 @@ export interface ModelCatalog {
   models: RecognitionModel[]
   active_tasks: InstallProgress[]
 }
-

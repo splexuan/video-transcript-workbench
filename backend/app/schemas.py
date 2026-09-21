@@ -29,6 +29,9 @@ class JobRead(BaseModel):
 
     id: str
     document_id: str | None
+    batch_id: str | None
+    batch_position: int | None
+    display_name: str | None
     platform: str
     source_type: str
     source_value: str
@@ -45,6 +48,58 @@ class JobRead(BaseModel):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class JobBatchPreflightRequest(BaseModel):
+    sources: list[str] = Field(min_length=1, max_length=50)
+
+
+class JobBatchCreate(JobBatchPreflightRequest):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    mode: Literal["auto", "fast", "accurate"] = "auto"
+    model_id: str | None = Field(default=None, max_length=64)
+    prefer_subtitle: bool = True
+    client_request_id: str = Field(min_length=8, max_length=100)
+
+
+class JobBatchPreflightItem(BaseModel):
+    position: int
+    raw_source: str
+    normalized_source: str | None
+    platform: str
+    status: Literal["valid", "duplicate", "unsupported"]
+    message: str
+
+
+class JobBatchPreflightRead(BaseModel):
+    total_count: int
+    valid_count: int
+    duplicate_count: int
+    unsupported_count: int
+    can_submit: bool
+    items: list[JobBatchPreflightItem]
+
+
+class JobBatchRead(BaseModel):
+    id: str
+    title: str
+    kind: str
+    control_status: str
+    status: str
+    progress: int
+    total_count: int
+    queued_count: int
+    running_count: int
+    completed_count: int
+    failed_count: int
+    cancelled_count: int
+    parent_batch_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class JobBatchDetailRead(JobBatchRead):
+    jobs: list[JobRead]
 
 
 class SegmentWrite(BaseModel):
@@ -197,4 +252,3 @@ class ModelCatalogRead(BaseModel):
     engines: list[EngineStatusRead]
     models: list[ModelStatusRead]
     active_tasks: list[InstallProgressRead]
-

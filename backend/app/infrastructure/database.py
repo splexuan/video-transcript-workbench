@@ -55,6 +55,9 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
 # SQLite 没有迁移工具：建表之后再补上「后加的列」。只做加法，不改类型、不删列。
 _LATER_COLUMNS: dict[str, dict[str, str]] = {
     "jobs": {
+        "batch_id": "VARCHAR(36)",
+        "batch_position": "INTEGER",
+        "display_name": "VARCHAR(300)",
         "model_id": "VARCHAR(64)",
         "model_name": "VARCHAR(120)",
         "transcript_source": "VARCHAR(16)",
@@ -69,6 +72,11 @@ _LATER_COLUMNS: dict[str, dict[str, str]] = {
     },
 }
 
+_LATER_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_jobs_batch_id ON jobs (batch_id)",
+    "CREATE INDEX IF NOT EXISTS ix_job_batch_position ON jobs (batch_id, batch_position)",
+)
+
 
 def _add_missing_columns() -> None:
     with engine.begin() as connection:
@@ -82,6 +90,8 @@ def _add_missing_columns() -> None:
                     connection.exec_driver_sql(
                         f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"
                     )
+        for ddl in _LATER_INDEXES:
+            connection.exec_driver_sql(ddl)
 
 
 def init_database() -> None:
@@ -94,4 +104,3 @@ def init_database() -> None:
 def get_session() -> Generator[Session, None, None]:
     with SessionLocal() as session:
         yield session
-

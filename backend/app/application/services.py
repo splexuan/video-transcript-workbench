@@ -5,10 +5,11 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.application.exporters import documents_as_zip
 from app.application.pagination import encode_cursor, fetch_page
 from app.application.platforms import detect_platform, extract_source_url
 from app.application.text_formatting import reflow_segments
@@ -26,6 +27,7 @@ from app.infrastructure.models import (
     new_id,
 )
 from app.schemas import (
+    AuthorSummary,
     JobBatchCreate,
     JobBatchDetailRead,
     JobBatchPreflightItem,
@@ -537,33 +539,199 @@ def retry_job(session: Session, job: Job) -> Job:
     )
 
 
+# 文案列表的排序白名单：只认这几个名字，不把列名透给外部。
+# 值就是排序列，游标里按它的类型存放排序键（见 pagination.fetch_page）。
+DOCUMENT_SORTS = {
+    "updated": Document.updated_at,
+    "created": Document.created_at,
+    "words": Document.word_count,
+}
+DEFAULT_DOCUMENT_SORT = "updated"
+
+# 作者列表一次最多回多少位：这是「用户关注的创作者数量」量级，不是内容量级。
+# 封顶既保证不无界拉取，也不必为它再设计一套游标；超出的用 q 按名字搜。
+MAX_AUTHOR_PAGE = 200
+DEFAULT_AUTHOR_PAGE = 100
+
+
 def list_documents(
     session: Session,
     *,
     query: str | None = None,
     platform: str | None = None,
+    uploader: str | None = None,
+    sort: str = DEFAULT_DOCUMENT_SORT,
     limit: int,
     cursor: str | None,
 ) -> tuple[list[Document], str | None]:
-    """文案列表；关键词同时匹配标题与正文，方便按记得的一句话找回文案。
+    """文案列表；关键词同时匹配标题、正文、作者与作品介绍，方便按记得的一句话找回文案。
 
-    筛选必须在服务端做：分页之后只拿到一页数据，前端再过滤就变成「只筛当前这一页」，
-    用户会以为库里只有这几条。按最近更新倒序分页，编辑过的文案会浮到最前面。
+    筛选与排序都在服务端做：分页之后只拿到一页数据，前端再过滤就变成「只筛当前这一页」，
+    用户会以为库里只有这几条；排序同理，按字数排全库和排当前页是两回事。
+    """
+
+    return fetch_page(
+        session,
+        _document_query(query=query, platform=platform, uploader=uploader),
+        DOCUMENT_SORTS.get(sort, DOCUMENT_SORTS[DEFAULT_DOCUMENT_SORT]),
+        Document.id,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
+def _document_query(
+    *,
+    query: str | None = None,
+    platform: str | None = None,
+    uploader: str | None = None,
+):
+    """文案的筛选条件。
+
+    列表与批量导出共用这一份：两边各写一套的话，会出现「列表看着筛过了、
+    导出来却是全部」这种对不上的情况。
     """
 
     stmt = select(Document)
     if platform:
         stmt = stmt.where(Document.platform == platform)
+    if uploader:
+        stmt = stmt.where(Document.uploader == uploader)
     keyword = (query or "").strip()
     if keyword:
         matched_by_text = select(TranscriptSegment.document_id).where(
             TranscriptSegment.text.contains(keyword)
         )
         stmt = stmt.where(
-            Document.title.contains(keyword) | Document.id.in_(matched_by_text)
+            Document.title.contains(keyword)
+            | Document.uploader.contains(keyword)
+            | Document.description.contains(keyword)
+            | Document.id.in_(matched_by_text)
         )
-    return fetch_page(
-        session, stmt, Document.updated_at, Document.id, limit=limit, cursor=cursor
+    return stmt
+
+
+class DocumentExportError(Exception):
+    """批量导出无法进行（当前筛选下没有文案，或超过单次上限）。"""
+
+
+# 一次最多打包多少篇：再多就请按作者或平台分几次导出。
+# 宁可明确报错，也不静默截断——用户不会去数压缩包里少没少。
+MAX_EXPORT_DOCUMENTS = 2000
+
+# 勾选导出一次最多多少篇：id 走查询串，而请求行长度有限（常见上限 8KB），
+# 36 字符的 uuid 摊下来 100 篇是安全值。要更多就直接用筛选导出，那条路没有这个限制。
+MAX_EXPORT_SELECTION = 100
+
+
+def export_documents_bundle(
+    session: Session,
+    *,
+    document_ids: list[str] | None = None,
+    query: str | None = None,
+    platform: str | None = None,
+    uploader: str | None = None,
+    sort: str = DEFAULT_DOCUMENT_SORT,
+    file_format: str = "txt",
+) -> bytes:
+    """把文案打包成一个 zip：顺序与列表一致，每篇一个文件。
+
+    两种取法：给了 document_ids 就只导这些（勾选导出），此时**其他筛选项忽略**——
+    id 已经是明确指定，再叠一层筛选只会让人猜「到底听谁的」；没给就导当前筛选下的全部。
+    """
+
+    if document_ids:
+        # 去重：同一个 id 传了两次，压缩包里也不该出现两份
+        wanted = list(dict.fromkeys(document_ids))
+        if len(wanted) > MAX_EXPORT_SELECTION:
+            raise DocumentExportError(
+                f"一次最多勾选导出 {MAX_EXPORT_SELECTION} 篇，更多请改用筛选导出"
+            )
+        # 只按 id 取：**不再叠加其他筛选项**。勾选是明确指定，再叠一层筛选会让
+        # 「我明明勾了它，怎么没导出来」变成需要解释的事。
+        stmt = select(Document).where(Document.id.in_(wanted)).limit(MAX_EXPORT_SELECTION)
+    else:
+        stmt = _document_query(query=query, platform=platform, uploader=uploader)
+        # 多取一篇用来判断有没有超限，比再查一次 count 便宜
+        stmt = stmt.limit(MAX_EXPORT_DOCUMENTS + 1)
+
+    documents = list(
+        session.scalars(
+            stmt.options(selectinload(Document.segments)).order_by(
+                DOCUMENT_SORTS.get(sort, DOCUMENT_SORTS[DEFAULT_DOCUMENT_SORT]).desc(),
+                Document.id.desc(),
+            )
+        )
+    )
+    if not documents:
+        raise DocumentExportError(
+            "选中的文案都已不存在，请刷新列表后重试"
+            if document_ids
+            else "当前筛选下没有可导出的文案"
+        )
+    if len(documents) > MAX_EXPORT_DOCUMENTS:
+        raise DocumentExportError(
+            f"一次最多导出 {MAX_EXPORT_DOCUMENTS} 篇，请按作者或平台分几次导出"
+        )
+    # 字幕来源的文案要按「一行一句」导出：一次把涉及的文档全查出来，
+    # 不要每篇再查一次任务
+    subtitle_ids = set(
+        session.scalars(
+            select(Job.document_id).where(
+                Job.document_id.in_([document.id for document in documents]),
+                Job.transcript_source == "subtitle",
+            )
+        )
+    )
+    return documents_as_zip(documents, subtitle_ids=subtitle_ids, file_format=file_format)
+
+
+def list_document_authors(
+    session: Session,
+    *,
+    query: str | None = None,
+    limit: int = DEFAULT_AUTHOR_PAGE,
+) -> tuple[list[AuthorSummary], int]:
+    """按作者聚合文案库：每位作者一条，带篇数、总字数与时间跨度。
+
+    只统计有作者名的文案：本地文件、以及少数解析不到作者的作品没有这一项，
+    归进一个空名字的分组没有意义。排序按篇数倒序、再按名字，结果稳定可复现。
+    """
+
+    conditions = [Document.uploader.is_not(None), Document.uploader != ""]
+    keyword = (query or "").strip()
+    if keyword:
+        conditions.append(Document.uploader.contains(keyword))
+    grouped = (
+        select(
+            Document.uploader.label("name"),
+            func.count(Document.id).label("count"),
+            func.coalesce(func.sum(Document.word_count), 0).label("total_words"),
+            func.min(Document.created_at).label("first_at"),
+            func.max(Document.updated_at).label("latest_at"),
+        )
+        .where(*conditions)
+        .group_by(Document.uploader)
+    )
+    # 总数用于界面说明「只显示了前 N 位」，比让前端猜准确
+    total = session.scalar(select(func.count()).select_from(grouped.subquery())) or 0
+    rows = session.execute(
+        grouped.order_by(
+            func.count(Document.id).desc(), Document.uploader.asc()
+        ).limit(limit)
+    ).all()
+    return (
+        [
+            AuthorSummary(
+                name=row.name,
+                count=row.count,
+                total_words=row.total_words,
+                first_at=row.first_at,
+                latest_at=row.latest_at,
+            )
+            for row in rows
+        ],
+        total,
     )
 
 

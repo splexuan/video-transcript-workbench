@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  AuthorPage,
   Connector,
   CredentialStatus,
   DocumentDetail,
@@ -96,11 +97,18 @@ export const api = {
   cancelJob: (id: string) => request<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
   /** 按原参数重新排队一次（失败/取消后的重试）。 */
   retryJob: (id: string) => request<Job>(`/api/jobs/${id}/retry`, { method: 'POST' }),
-  /** 删除终态任务记录；进行中的任务要先取消。 */
-  deleteJob: (id: string) =>
-    request<{ id: string; removed: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
-  documents: (params: { q?: string; platform?: string; limit?: number; cursor?: string | null } = {}) =>
+  /** sort 只认白名单：updated / created / words；传别的会被后端拒绝。 */
+  documents: (params: { q?: string; platform?: string; uploader?: string; sort?: string; limit?: number; cursor?: string | null } = {}) =>
     request<Page<DocumentSummary>>(`/api/documents${queryString(params)}`),
+  /** 按作者浏览文案库：每位作者一条聚合（封顶返回，q 可按名字找）。 */
+  documentAuthors: (params: { q?: string; limit?: number } = {}) =>
+    request<AuthorPage>(`/api/documents/authors${queryString(params)}`),
+  /**
+   * 批量导出：打包成 zip，由浏览器直接下载（和单篇导出一样走 `<a download>`）。
+   * 给了 ids 就只导这几篇（其余筛选项会被忽略），没给就导当前筛选下的全部。
+   */
+  exportDocumentsUrl: (params: { ids?: string[]; q?: string; platform?: string; uploader?: string; sort?: string; format?: 'txt' | 'srt' | 'vtt' | 'json' }) =>
+    `/api/documents/export${queryString(params)}`,
   /** 只回 id 与标题：任务行、批次行要显示文案标题，不必把整个文案库拉回来。 */
   documentTitles: (ids: string[]) =>
     request<DocumentTitle[]>(`/api/documents/titles${queryString({ ids })}`),

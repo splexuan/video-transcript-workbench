@@ -57,10 +57,16 @@ export function DocumentPreviewModal({
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
+    // 锁滚动后滚动条会消失、视口宽出约 15px，背景页与居中的弹窗都会跟着平移一下。
+    // 量出这段宽度写进 CSS 变量，由样式表补成内边距抵消掉；必须在设 overflow 之前量。
+    const gap = window.innerWidth - document.documentElement.clientWidth
+    const root = document.documentElement
     document.body.style.overflow = 'hidden'
+    if (gap > 0) root.style.setProperty('--scroll-lock-gap', `${gap}px`)
     return () => {
       window.removeEventListener('keydown', onKey)
       document.body.style.overflow = ''
+      root.style.removeProperty('--scroll-lock-gap')
     }
   }, [onClose])
 
@@ -103,6 +109,10 @@ export function DocumentPreviewModal({
     anchor.click()
   }
 
+  // 本地取数很快，先把「正在打开文案…」画上去、再被真实标题替换，看起来就是闪一下。
+  // 所以加载期间整个弹窗都不渲染，等数据（或错误）到了再一次性出现。
+  if (!detail && !error) return null
+
   return (
     <div className="modal-overlay" onClick={onClose} role="presentation">
       <section
@@ -114,7 +124,7 @@ export function DocumentPreviewModal({
       >
         <header className="modal-head">
           <div className="modal-title">
-            <strong title={detail?.title}>{detail?.title ?? '正在打开文案…'}</strong>
+            <strong title={detail?.title}>{detail?.title ?? '无法预览'}</strong>
             {detail && <PlatformBadge platform={detail.platform} />}
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭预览">

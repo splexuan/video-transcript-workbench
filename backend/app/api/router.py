@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Annotated
@@ -15,7 +16,12 @@ from sqlalchemy.orm import Session
 from app.application.exporters import export_document
 from app.application.pagination import MAX_PAGE_SIZE, InvalidCursor
 from app.application.services import (
+    DEFAULT_AUTHOR_PAGE,
+    DEFAULT_DOCUMENT_SORT,
+    DOCUMENT_SORTS,
+    MAX_AUTHOR_PAGE,
     TERMINAL_JOB_STATUSES,
+    DocumentExportError,
     DocumentInUseError,
     JobBatchControlError,
     JobBatchIdempotencyConflict,
@@ -27,9 +33,11 @@ from app.application.services import (
     create_job_batch,
     delete_document,
     delete_job_record,
+    export_documents_bundle,
     find_document_media,
     get_document,
     get_job_batch,
+    list_document_authors,
     list_document_titles,
     list_documents,
     list_job_batches,
@@ -53,6 +61,7 @@ from app.infrastructure.media import tools_ready
 from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.models import Document, Job, JobBatch
 from app.schemas import (
+    AuthorPage,
     DocumentDetail,
     DocumentRead,
     DocumentTitleRead,
@@ -332,16 +341,41 @@ def documents(
     session: SessionDep,
     q: Annotated[str | None, Query(max_length=100)] = None,
     platform: Annotated[str | None, Query(max_length=32)] = None,
+    uploader: Annotated[str | None, Query(max_length=200)] = None,
+    sort: Annotated[str, Query(max_length=16)] = DEFAULT_DOCUMENT_SORT,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
     cursor: Annotated[str | None, Query(max_length=256)] = None,
 ) -> Page[DocumentRead]:
+    if sort not in DOCUMENT_SORTS:
+        raise HTTPException(status_code=400, detail="不支持的排序方式")
     try:
         items, next_cursor = list_documents(
-            session, query=q, platform=platform, limit=limit, cursor=cursor
+            session,
+            query=q,
+            platform=platform,
+            uploader=uploader,
+            sort=sort,
+            limit=limit,
+            cursor=cursor,
         )
     except InvalidCursor as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return Page(items=items, next_cursor=next_cursor)
+
+
+@router.get("/documents/authors", response_model=AuthorPage)
+def document_authors(
+    session: SessionDep,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_AUTHOR_PAGE)] = DEFAULT_AUTHOR_PAGE,
+) -> AuthorPage:
+    """按作者浏览文案库：每位作者一条聚合，供文案库的「按作者浏览」用。
+
+    注意这条必须声明在 `/documents/{document_id}` 之前，否则会被当成一个文档 id。
+    """
+
+    items, total = list_document_authors(session, query=q, limit=limit)
+    return AuthorPage(items=items, total=total)
 
 
 @router.get("/documents/titles", response_model=list[DocumentTitleRead])
@@ -355,6 +389,45 @@ def document_titles(
     """
 
     return list_document_titles(session, ids or [])
+
+
+@router.get("/documents/export")
+def export_documents(
+    session: SessionDep,
+    ids: Annotated[list[str] | None, Query(max_length=64)] = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    platform: Annotated[str | None, Query(max_length=32)] = None,
+    uploader: Annotated[str | None, Query(max_length=200)] = None,
+    sort: Annotated[str, Query(max_length=16)] = DEFAULT_DOCUMENT_SORT,
+    file_format: Annotated[str, Query(alias="format")] = "txt",
+) -> Response:
+    """把文案打成一个 zip：每篇一个文件，内容与单篇导出同源。
+
+    给了 `ids`（重复参数）就只导勾选的那些，其余筛选项忽略；没给就导当前筛选下的全部。
+
+    注意这条必须声明在 `/documents/{document_id}` 之前，否则会被当成一个文档 id。
+    """
+
+    if sort not in DOCUMENT_SORTS:
+        raise HTTPException(status_code=400, detail="不支持的排序方式")
+    try:
+        payload = export_documents_bundle(
+            session,
+            document_ids=ids,
+            query=q,
+            platform=platform,
+            uploader=uploader,
+            sort=sort,
+            file_format=file_format,
+        )
+    except (DocumentExportError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = quote(f"文案导出-{datetime.now().strftime('%Y%m%d-%H%M')}.zip")
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 def _document_detail(session: Session, document: Document) -> DocumentDetail:

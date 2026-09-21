@@ -102,6 +102,22 @@ export interface DocumentTitle {
   title: string
 }
 
+/** 文案库里的作者聚合：一位作者一条。 */
+export interface AuthorSummary {
+  name: string
+  count: number
+  total_words: number
+  /** 第一次与最近一次提取这位作者的作品。 */
+  first_at: string
+  latest_at: string
+}
+
+/** 作者列表：封顶返回 + 总数，界面据此说明「只显示了前 N 位」。 */
+export interface AuthorPage {
+  items: AuthorSummary[]
+  total: number
+}
+
 export interface TranscriptSegment {
   id: number
   position: number

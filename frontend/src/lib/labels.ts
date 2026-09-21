@@ -19,6 +19,20 @@ export const modeLabels: Record<string, string> = {
   accurate: '精准时间轴',
 }
 
+/**
+ * 平台与显示名的唯一对照表：徽章、文案库的筛选下拉都从这里取。
+ * 分成两份时容易漏平台（视频号就曾在硬编码的下拉里漏掉，导致筛不出来）。
+ */
+export const platformLabels: Record<string, string> = {
+  bilibili: 'B站',
+  douyin: '抖音',
+  kuaishou: '快手',
+  xiaohongshu: '小红书',
+  wechat: '视频号',
+  local: '本地文件',
+  unknown: '待识别',
+}
+
 export const stageLabels: Record<string, string> = {
   waiting: '排队中',
   resolving: '读取来源',

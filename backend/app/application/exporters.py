@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
+import re
+import zipfile
+from collections.abc import Sequence
 
 from app.application.text_formatting import (
     group_paragraphs,
@@ -93,3 +97,48 @@ def export_document(
         return json.dumps(payload, ensure_ascii=False, indent=2), "application/json; charset=utf-8", "json"
 
     raise ValueError("不支持的导出格式")
+
+
+def documents_as_zip(
+    documents: Sequence[Document],
+    *,
+    subtitle_ids: set[str],
+    file_format: str,
+) -> bytes:
+    """把多篇文案打成一个 zip：每篇一个文件，内容与单篇导出逐字节一致。
+
+    单篇导出怎么写（含 txt / srt 的 BOM），这里就怎么写——两条路径必须同源，
+    否则同一篇文案「单独导出」和「批量导出」的结果会不一样。
+    """
+
+    buffer = io.BytesIO()
+    used: set[str] = set()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for document in documents:
+            content, _, extension = export_document(
+                document, file_format, line_by_line=document.id in subtitle_ids
+            )
+            data = (
+                content.encode("utf-8-sig")
+                if extension in {"txt", "srt"}
+                else content.encode("utf-8")
+            )
+            bundle.writestr(_entry_name(document.title, extension, used), data)
+    return buffer.getvalue()
+
+
+def _entry_name(title: str, extension: str, used: set[str]) -> str:
+    """压缩包里的文件名：非法字符换成下划线，重名补序号。
+
+    标题是用户自己改的，可能带 `/` 或 `:`（Windows 上不合法），也可能两篇同名；
+    截断到 80 字是为了别撞上路径长度限制。
+    """
+
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title).strip()[:80] or "未命名文案"
+    name = f"{safe}.{extension}"
+    index = 2
+    while name in used:
+        name = f"{safe} ({index}).{extension}"
+        index += 1
+    used.add(name)
+    return name

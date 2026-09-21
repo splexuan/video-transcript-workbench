@@ -158,6 +158,24 @@ class DocumentTitleRead(BaseModel):
     title: str
 
 
+class AuthorSummary(BaseModel):
+    """文案库里的作者聚合：一位作者一条。"""
+
+    name: str
+    count: int
+    total_words: int
+    # 时间跨度：第一次与最近一次提取这个作者的作品
+    first_at: datetime
+    latest_at: datetime
+
+
+class AuthorPage(BaseModel):
+    """作者列表：封顶返回 + 总数，界面据此说明「只显示了前 N 位」。"""
+
+    items: list[AuthorSummary]
+    total: int
+
+
 class DocumentDetail(DocumentRead):
     segments: list[SegmentRead]
     # 来源作品介绍，通常比标题长，只在详情里给

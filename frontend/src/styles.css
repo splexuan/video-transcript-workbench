@@ -134,6 +134,9 @@ body,
 }
 body {
   min-width: 320px;
+  /* 弹窗锁滚动时滚动条会消失、视口宽出约 15px，背景页面会跟着平移一下。
+     锁滚动期间由脚本把这段宽度写进 --scroll-lock-gap，在这里补成内边距抵消掉。 */
+  padding-right: var(--scroll-lock-gap, 0px);
   background: var(--bg);
   color: var(--text);
   font-size: var(--text-md);
@@ -373,7 +376,11 @@ button:disabled {
   z-index: 50;
   display: grid;
   place-items: center;
-  padding: 32px;
+  /* 遮罩是 fixed + inset:0，视口一变宽它就跟着变宽，居中的弹窗于是右移半格。
+     右边多补同样的宽度，弹窗中心点才和锁滚动之前一致。 */
+  --overlay-padding: 32px;
+  padding: var(--overlay-padding);
+  padding-right: calc(var(--overlay-padding) + var(--scroll-lock-gap, 0px));
   background: rgba(34, 29, 23, 0.45);
   animation: modal-fade var(--ease);
 }
@@ -1538,14 +1545,20 @@ span.task-exec-cover {
 .jobs-page-panel {
   overflow: hidden;
 }
+/* 表格比面板窄时不该悄悄切掉最后一列：`overflow: hidden` 会把「操作」里的删除按钮
+   裁没，看起来像这些行压根没有删除按钮。宁可给一条横向滚动条 */
+.library-panel {
+  overflow-x: auto;
+}
 .library-table {
-  min-width: 720px;
+  /* 8 列 + 7 个列间距 + 左右内边距的实际需要宽度。写小了最后一列会被裁掉 */
+  min-width: 1010px;
 }
 .library-head,
 .library-row {
   display: grid;
-  /* 标题 | 来源 | 平台 | 字数 | 最近更新 | 操作 */
-  grid-template-columns: minmax(280px, 1.7fr) 64px 116px 76px 116px 56px;
+  /* 勾选 | 标题 | 来源 | 平台 | 作者 | 字数 | 最近更新 | 操作 */
+  grid-template-columns: 18px minmax(280px, 1.7fr) 64px 116px 132px 76px 116px 56px;
   align-items: center;
   gap: 16px;
   padding: 0 20px;
@@ -1627,13 +1640,43 @@ span.task-exec-cover {
   color: var(--primary);
   background: var(--primary-soft);
 }
-/* 工具栏右侧的筛选下拉 */
+/* 工具栏右侧的筛选与动作：整组靠右、彼此紧挨，别再被 space-between 摊成一片 */
+.toolbar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+/* 筛选下拉：宽度统一，箭头自己画。原生箭头各家浏览器长得都不一样，
+   夹在手写样式的搜索框和按钮中间就像没做完 */
 .filter-select {
+  /* 24×24 的 chevron，用 mask 上色，所以能跟着深浅主题走（data URI 里引用不了变量） */
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  position: relative;
   display: flex;
   align-items: center;
 }
 .filter-select select {
-  min-width: 132px;
+  min-width: 156px;
+  appearance: none;
+  cursor: pointer;
+}
+.filter-select::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  width: 12px;
+  height: 12px;
+  background: var(--text-muted);
+  -webkit-mask: var(--chevron) center / contain no-repeat;
+  mask: var(--chevron) center / contain no-repeat;
+  pointer-events: none;
+  transition: background var(--ease);
+}
+.filter-select:hover::after,
+.filter-select:focus-within::after {
+  background: var(--text-secondary);
 }
 /* 列表里的作品封面：16:9 缩略图，图片盖在图标占位之上，加载失败自动露出占位 */
 .library-thumb {
@@ -1661,6 +1704,127 @@ span.task-exec-cover {
   font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 勾选列：只放一个复选框 */
+.pick-cell {
+  display: flex;
+  align-items: center;
+}
+.pick-cell input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+/* 勾选中的行：左边一道主色，和任务卡片的悬停提示同一套视觉语言 */
+.library-row.selected {
+  background: var(--surface-subtle);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+/* 作者：点它只看这个人的文案，所以做成文字按钮而不是普通文本 */
+.author-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.author-link {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.author-link:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.author-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* 按作者浏览：面板里的作者卡片。作者数是内容量级的零头，卡片比表格更好扫 */
+.author-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px 20px;
+}
+.author-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.author-panel-head .search-box {
+  max-width: 320px;
+}
+.author-panel-head small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.author-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+.author-card {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--ease), background var(--ease);
+}
+.author-card strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.author-card:hover {
+  border-color: var(--primary);
+  background: var(--surface-subtle);
+}
+.author-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.author-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+/* 已生效的作者筛选：一个可点掉的标签 */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.filter-chip:hover {
+  border-color: var(--primary);
+  opacity: 0.85;
 }
 .empty-state {
   display: grid;
@@ -1903,6 +2067,14 @@ span.task-exec-cover {
   background: var(--surface-subtle);
   box-shadow: inset 3px 0 0 var(--border-strong);
 }
+/* 识别完的任务整行可点（直接打开预览），键盘也能聚焦到；悬停反馈上面这条已有 */
+.job-card.clickable {
+  cursor: pointer;
+}
+.job-card.clickable:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
 .job-card:last-child {
   border-bottom: 0;
 }
@@ -2051,13 +2223,11 @@ span.task-exec-cover {
   padding: 0 13px;
   border-radius: var(--radius-sm);
 }
-.job-card-actions .job-delete,
 .model-actions .model-delete {
   width: 34px;
   height: 34px;
   color: var(--text-muted);
 }
-.job-card-actions .job-delete:hover,
 .model-actions .model-delete:hover {
   color: var(--danger);
   border-color: var(--danger);
@@ -3607,6 +3777,11 @@ button.timecode:hover:not(:disabled) {
   .toolbar {
     flex-direction: column;
   }
+  /* 竖排时整组占满一行：留着 margin-left:auto 会被挤到右边 */
+  .toolbar-filters {
+    width: 100%;
+    margin-left: 0;
+  }
   .library-panel {
     overflow: visible;
   }
@@ -3620,11 +3795,14 @@ button.timecode:hover:not(:disabled) {
     display: none;
   }
   .library-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    /* 第一列放勾选框，后面几行留空占位保持缩进；
+       作者那一行原来漏了区域定义，`.author-cell` 只能靠自动放置，位置不可控 */
     grid-template-areas:
-      "title actions"
-      "origin platform"
-      "word date";
+      "pick title actions"
+      ". author author"
+      ". origin platform"
+      ". word date";
     gap: 8px 12px;
     min-height: 96px;
     padding: 14px;
@@ -3635,6 +3813,9 @@ button.timecode:hover:not(:disabled) {
   }
   .library-row:last-child {
     border-bottom: 1px solid var(--border);
+  }
+  .library-row .pick-cell {
+    grid-area: pick;
   }
   .library-row .title-cell {
     grid-area: title;
@@ -3648,6 +3829,9 @@ button.timecode:hover:not(:disabled) {
   }
   .library-row .origin-cell {
     grid-area: origin;
+  }
+  .library-row .author-cell {
+    grid-area: author;
   }
   .library-row .platform-cell {
     grid-area: platform;
@@ -3695,9 +3879,8 @@ button.timecode:hover:not(:disabled) {
     display: flex;
     gap: 6px 16px;
   }
-  .job-card-actions .job-delete {
-    width: 44px;
-    height: 44px;
+  .job-card-actions .text-button {
+    min-height: 44px;
   }
   .batch-card-head,
   .batch-card-foot {

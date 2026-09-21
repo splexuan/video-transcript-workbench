@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, FileText, ListTodo, LoaderCircle, Pause, Play, RotateCcw, Trash2 } from 'lucide-react'
+import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, ListTodo, LoaderCircle, Pause, Play, RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
@@ -193,23 +193,6 @@ export function JobsPage() {
     }
   }
 
-  async function remove(id: string) {
-    // 提醒保留音轨的损失：开启了「保留原始音视频」的任务，对照音频跟着记录一起删
-    if (!window.confirm('删除这条任务记录？临时音轨会一并清理，已保存的文案不受影响。')) return
-    setBusyId(id)
-    setError('')
-    try {
-      await api.deleteJob(id)
-      // 先本地摘掉再刷第一页：否则在刷新结果回来之前，那一行还挂在列表上
-      setJobs((current) => current.filter((item) => item.id !== id))
-      void refresh()
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '删除任务失败，请稍后再试')
-    } finally {
-      setBusyId('')
-    }
-  }
-
   async function retry(id: string) {
     setBusyId(id)
     setError('')
@@ -259,15 +242,17 @@ export function JobsPage() {
     <div className="page">
       <header className="page-header"><div><h1>任务队列</h1><p>本机正在处理和已经结束的提取任务。</p></div></header>
       <div className="toolbar">
-        <label className="filter-select">
-          <span className="sr-only">按状态筛选</span>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="all">全部状态</option>
-            <option value="active">进行中</option>
-            <option value="completed">已完成</option>
-            <option value="failed">失败或已取消</option>
-          </select>
-        </label>
+        <div className="toolbar-filters">
+          <label className="filter-select">
+            <span className="sr-only">按状态筛选</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">全部状态</option>
+              <option value="active">进行中</option>
+              <option value="completed">已完成</option>
+              <option value="failed">失败或已取消</option>
+            </select>
+          </label>
+        </div>
       </div>
       {error && <p className="form-message error" role="alert">{error}</p>}
       <section className="panel jobs-page-panel">
@@ -412,9 +397,29 @@ export function JobsPage() {
           {jobs.map((job) => {
           const title = jobDisplayTitle(job, titles)
           const cancellable = job.status === 'queued' || job.status === 'running'
-          const deletable = !cancellable
+          // 失败或取消的任务给一键重试，省去回工作台重新粘贴链接
+          const retryable = job.status === 'failed' || job.status === 'cancelled'
+          // 识别完、有文案的任务整行可点，直接打开预览；其余行不接受点击
+          const documentId = job.status === 'completed' ? job.document_id : null
           return (
-            <article className="job-card" key={job.id}>
+            <article
+              className={documentId ? 'job-card clickable' : 'job-card'}
+              key={job.id}
+              role={documentId ? 'button' : undefined}
+              tabIndex={documentId ? 0 : undefined}
+              aria-label={documentId ? `打开文案《${title}》` : undefined}
+              onClick={documentId ? () => setPreviewId(documentId) : undefined}
+              onKeyDown={
+                documentId
+                  ? (event: ReactKeyboardEvent<HTMLElement>) => {
+                      // 空格在容器上默认是滚动页面，得自己拦下来
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      setPreviewId(documentId)
+                    }
+                  : undefined
+              }
+            >
               <div className="job-card-top">
                 <div className="job-title">
                   <span className={`job-state ${job.status}`} />
@@ -422,7 +427,7 @@ export function JobsPage() {
                     <strong title={title}>{title}</strong>
                     {job.status !== 'completed' && <small title={job.source_value}>{job.message}</small>}
                     {job.error_code?.startsWith('COOKIE_') && (
-                      <Link className="job-cookie-hint" to="/connectors">去「平台连接」获取访问权限</Link>
+                      <Link className="job-cookie-hint" to="/connectors" onClick={(event) => event.stopPropagation()}>去「平台连接」获取访问权限</Link>
                     )}
                   </div>
                 </div>
@@ -451,18 +456,12 @@ export function JobsPage() {
                   )}
                 </div>
                 <div className="job-card-actions">
-                  {/* 失败/取消的任务给一键重试，省去回工作台重新粘贴链接 */}
-                  {deletable && job.status !== 'completed' && (
-                    <button className="text-button" type="button" onClick={() => retry(job.id)} disabled={busyId === job.id}><RotateCcw size={15} /> 重新提取</button>
+                  {/* 卡片整行可点，行内按钮要把点击拦下来，别顺手把文案也打开了 */}
+                  {retryable && (
+                    <button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); void retry(job.id) }} disabled={busyId === job.id}><RotateCcw size={15} /> 重新提取</button>
                   )}
                   {cancellable && (
-                    <button className="text-button danger" type="button" onClick={() => cancel(job.id)} disabled={busyId === job.id}><Ban size={15} /> 取消任务</button>
-                  )}
-                  {deletable && (
-                    <button className="icon-button danger job-delete" type="button" onClick={() => remove(job.id)} disabled={busyId === job.id} aria-label={`删除任务《${title}》`} title="删除记录"><Trash2 size={15} /></button>
-                  )}
-                  {job.status === 'completed' && job.document_id && (
-                    <button className="secondary-button" type="button" onClick={() => setPreviewId(job.document_id as string)}><FileText size={15} /> 打开文案</button>
+                    <button className="text-button danger" type="button" onClick={(event) => { event.stopPropagation(); void cancel(job.id) }} disabled={busyId === job.id}><Ban size={15} /> 取消任务</button>
                   )}
                 </div>
               </div>

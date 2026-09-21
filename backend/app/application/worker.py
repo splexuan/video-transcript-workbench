@@ -108,6 +108,8 @@ def create_document(session: Session, job: Job, info: MediaInfo) -> Document:
         platform=info.platform,
         source_type=job.source_type,
         source_value=job.source_value,
+        # 文案库里要能看出这条是单条提取还是批量提取来的
+        source_kind="batch" if job.batch_id else "single",
         status="processing",
         duration_seconds=info.duration_seconds,
         uploader=info.uploader,

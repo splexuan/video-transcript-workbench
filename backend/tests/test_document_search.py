@@ -52,7 +52,8 @@ def test_search_matches_title_and_body(tmp_path, monkeypatch) -> None:
         title_id, body_id, other_id = by_title.id, by_body.id, other.id
 
     with TestClient(app) as client:
-        matched = {item["id"] for item in client.get("/api/documents", params={"q": "摆摊"}).json()}
-        # 标题命中 + 正文命中，无关文档不出现
-        assert matched == {title_id, body_id}
-        assert other_id not in matched
+        listed = client.get("/api/documents", params={"q": "摆摊"}).json()
+    matched = {item["id"] for item in listed["items"]}
+    # 标题命中 + 正文命中，无关文档不出现
+    assert matched == {title_id, body_id}
+    assert other_id not in matched

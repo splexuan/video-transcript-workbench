@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+T = TypeVar("T")
+
+
+class Page(BaseModel, Generic[T]):
+    """分页响应：一页数据 + 下一页游标。
+
+    `next_cursor` 为 None 表示已经到底。前端不要自己拼游标，原样回传即可。
+    """
+
+    items: list[T]
+    next_cursor: str | None = None
 
 
 class JobCreate(BaseModel):
@@ -125,6 +137,8 @@ class DocumentRead(BaseModel):
     platform: str
     source_type: str
     source_value: str
+    # 'single' | 'batch'：这条文案来自单条提取还是批量提取
+    source_kind: str = "single"
     status: str
     duration_seconds: float | None
     word_count: int
@@ -133,6 +147,15 @@ class DocumentRead(BaseModel):
     has_cover: bool = False
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentTitleRead(BaseModel):
+    """只有 id 与标题的轻量表示，给任务/批次行反查标题用。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
 
 
 class DocumentDetail(DocumentRead):

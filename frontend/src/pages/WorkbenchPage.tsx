@@ -1,14 +1,16 @@
 import { ArrowRight, CircleCheck, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react'
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { BatchExecution } from '../components/BatchExecution'
 import { DocumentPreviewModal } from '../components/DocumentPreviewModal'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { TaskExecution } from '../components/TaskExecution'
 import { api } from '../lib/api'
 import { jobDisplayTitle } from '../lib/jobDisplay'
+import { isRunningBatch } from '../lib/jobBatch'
 import { shortModelName } from '../lib/labels'
-import type { DocumentSummary, Job, JobBatchPreflight, ModelCatalog, RecognitionModel } from '../types'
+import type { DocumentSummary, DocumentTitle, Job, JobBatch, JobBatchDetail, JobBatchPreflight, ModelCatalog, RecognitionModel } from '../types'
 
 function timeLabel(value: string) {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -46,7 +48,10 @@ export function WorkbenchPage() {
   const [modelId, setModelId] = useState('')
   const [preferSubtitle, setPreferSubtitle] = useState(true)
   const [jobs, setJobs] = useState<Job[]>([])
-  const [documents, setDocuments] = useState<DocumentSummary[]>([])
+  // 右栏「最近文案」只展示 5 条，所以只取第一页，不再把整个文案库拉回来
+  const [recentDocuments, setRecentDocuments] = useState<DocumentSummary[]>([])
+  // 任务行、批次行要显示的标题：只按当前涉及的 document_id 查
+  const [titles, setTitles] = useState<DocumentTitle[]>([])
   // 最近文案点击 → 文案预览弹窗
   const [docPreviewId, setDocPreviewId] = useState('')
   // 本次会话刚提交的任务：刷新页面后清空，任务执行面板不会回显历史任务
@@ -57,21 +62,69 @@ export function WorkbenchPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [createdBatchId, setCreatedBatchId] = useState('')
+  // 服务端最近批次的摘要：右栏要靠它认出「正在跑的那个批次」，不能只认本地刚提交的 id
+  const [recentBatches, setRecentBatches] = useState<JobBatch[]>([])
+  // 当前展示的批次详情：批量执行时右栏要逐条显示子任务，只有 id 看不到每条的状态
+  const [batchDetail, setBatchDetail] = useState<JobBatchDetail | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let active = true
-    const load = () => Promise.all([api.jobs(4), api.documents()])
-      .then(([nextJobs, nextDocuments]) => {
+    const load = () => Promise.all([
+      api.jobs({ limit: 4 }),
+      api.documents({ limit: 5 }),
+      api.batches({ limit: 20 }),
+    ])
+      .then(([jobsPage, documentsPage, batchesPage]) => {
         if (!active) return
-        setJobs(nextJobs)
-        setDocuments(nextDocuments.slice(0, 5))
+        setJobs(jobsPage.items)
+        setRecentDocuments(documentsPage.items)
+        setRecentBatches(batchesPage.items)
       })
       .catch((reason: Error) => active && setError(reason.message))
     void load()
     const timer = window.setInterval(load, 1600)
     return () => { active = false; window.clearInterval(timer) }
   }, [])
+
+  // 右栏要盯的批次：本次会话提交的优先（已结束也继续显示结果，用户刚提交就想看结论），
+  // 否则回落到服务端「正在推进」的最新批次——切页面再回来、或刷新页面时，正在跑的批量
+  // 任务不会从右栏消失；已结束与暂停的都不回落，避免把历史批次或无法收掉的暂停批次钉在首页。
+  const runningBatch = recentBatches.find((batch) => isRunningBatch(batch.status))
+  const monitoredBatchId = createdBatchId || runningBatch?.id || ''
+
+  // 批次的子任务详情单独轮询。没有可监视的批次时（提交的是单条任务，或没有在跑的批次）
+  // 不发请求，右栏回到原来的单任务形态。
+  useEffect(() => {
+    if (!monitoredBatchId) return
+    let active = true
+    const load = () => api.batch(monitoredBatchId)
+      .then((detail) => active && setBatchDetail(detail))
+      .catch((reason: Error) => active && setError(reason.message))
+    void load()
+    const timer = window.setInterval(load, 1600)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [monitoredBatchId])
+
+  // 只查当前这几条任务需要的文案标题。原来是把整个文案库拉下来在本地查找，文案一多，
+  // 1.6 秒一次的轮询就成了实打实的负担；这里改成按 document_id 精确取。
+  const titleIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const job of [...jobs, ...(batchDetail?.jobs ?? [])]) {
+      if (job.document_id) ids.add(job.document_id)
+    }
+    return [...ids].sort()
+  }, [jobs, batchDetail])
+  const titleKey = titleIds.join(',')
+
+  useEffect(() => {
+    if (!titleKey) return
+    let active = true
+    api.documentTitles(titleKey.split(','))
+      .then((items) => active && setTitles(items))
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [titleKey])
 
   useEffect(() => {
     if (captureMode !== 'batch') return
@@ -148,6 +201,7 @@ export function WorkbenchPage() {
     setError('')
     setNotice('')
     setCreatedBatchId('')
+    setBatchDetail(null)
     try {
       if (captureMode === 'batch') {
         const created = await api.createBatch({
@@ -412,14 +466,14 @@ export function WorkbenchPage() {
             <div><h2>最近文案</h2><p>接着上次继续校对</p></div>
             <Link to="/library">查看全部 <ArrowRight size={15} /></Link>
           </div>
-          {documents.length === 0 ? (
+          {recentDocuments.length === 0 ? (
             <div className="compact-empty">
               <span>还没有文案</span>
               <p>提取完成后会自动保存在这里。</p>
             </div>
           ) : (
             <div className="document-list">
-              {documents.map((document) => (
+              {recentDocuments.map((document) => (
                 <Link
                   className="document-row"
                   to={`/documents/${document.id}`}
@@ -443,13 +497,24 @@ export function WorkbenchPage() {
 
         <section className="panel task-panel">
           <div className="section-heading">
-            <div><h2>任务执行</h2><p>当前提取任务的实时进度</p></div>
+            <div>
+              <h2>任务执行</h2>
+              <p>{batchDetail ? '批次里每一条的实时进度' : '当前提取任务的实时进度'}</p>
+            </div>
             <Link to="/jobs">全部任务 <ArrowRight size={15} /></Link>
           </div>
-          {current ? (
+          {/* 批量任务要逐条显示子任务：单任务面板（TaskExecution）只够放一条，
+              批次跑起来时用它只能看到最先提交的那条，看不到其余进度。 */}
+          {batchDetail ? (
+            <BatchExecution
+              batch={batchDetail}
+              titles={titles}
+              onOpenDocument={setDocPreviewId}
+            />
+          ) : current ? (
             <TaskExecution
               job={current}
-              title={jobDisplayTitle(current, documents)}
+              title={jobDisplayTitle(current, titles)}
               onOpenDocument={setDocPreviewId}
               onRetry={retryJob}
             />

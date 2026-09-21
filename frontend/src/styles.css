@@ -1279,6 +1279,146 @@ span.task-exec-cover {
   margin-top: 6px;
 }
 
+/* ---------- 右栏「任务执行」的批量形态 ---------- */
+/* 窄栏（300～380px）放不下任务队列页那套五列网格，所以每条子任务竖向堆叠：
+   状态芯片收进标题行，平台徽标与阶段、更新时间并成一行。 */
+
+.task-batch {
+  display: grid;
+  gap: 11px;
+}
+.task-batch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.task-batch-head strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-batch-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.task-batch-progress,
+.task-batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.task-batch-progress .progress-track,
+.task-batch-bar .progress-track {
+  flex: 1;
+  margin: 0;
+}
+.task-batch-progress > span,
+.task-batch-bar > span {
+  width: 36px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+/* 子任务多于一屏时列表内部滚动，不把整页撑长 */
+.task-batch-list {
+  display: grid;
+  gap: 6px;
+  max-height: 430px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.task-batch-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 10px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+.task-batch-item .job-state {
+  margin-top: 5px;
+}
+.task-batch-body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.task-batch-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.task-batch-index {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+.task-batch-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-batch-title-row .status-chip {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+}
+.task-batch-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.task-batch-meta time {
+  font-variant-numeric: tabular-nums;
+}
+.task-batch-stage {
+  color: var(--text-secondary);
+}
+.task-batch-message {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-batch-message.error {
+  color: var(--danger);
+}
+.task-batch-stalled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--warning);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+}
+.task-batch-stalled svg {
+  flex: 0 0 auto;
+}
+.task-batch-open {
+  justify-self: start;
+}
+
 /* 完成的任务整行可点：指针 + 悬停浅底 + 键盘焦点环 */
 .job-row.clickable {
   padding: 8px 10px;
@@ -1355,6 +1495,15 @@ span.task-exec-cover {
 
 /* ---------- 文案库 ---------- */
 
+/* 分页列表底部的「加载更多」：居中、和上方内容留出间距 */
+.list-more {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0 4px;
+}
+.list-more .secondary-button {
+  gap: 6px;
+}
 .toolbar {
   display: flex;
   justify-content: space-between;
@@ -1390,12 +1539,13 @@ span.task-exec-cover {
   overflow: hidden;
 }
 .library-table {
-  min-width: 640px;
+  min-width: 720px;
 }
 .library-head,
 .library-row {
   display: grid;
-  grid-template-columns: minmax(280px, 1.7fr) 116px 76px 116px 56px;
+  /* 标题 | 来源 | 平台 | 字数 | 最近更新 | 操作 */
+  grid-template-columns: minmax(280px, 1.7fr) 64px 116px 76px 116px 56px;
   align-items: center;
   gap: 16px;
   padding: 0 20px;
@@ -1457,6 +1607,25 @@ span.task-exec-cover {
   font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
   white-space: nowrap;
+}
+/* 文案来源标注：单条 / 批量。批量用主色，单条弱化——整页每行都挂标签才不显得吵 */
+.origin-cell {
+  display: flex;
+  align-items: center;
+}
+.origin-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.origin-badge.batch {
+  color: var(--primary);
+  background: var(--primary-soft);
 }
 /* 工具栏右侧的筛选下拉 */
 .filter-select {
@@ -1616,6 +1785,27 @@ span.task-exec-cover {
   border-radius: var(--radius-sm);
   background: var(--surface);
   font-size: var(--text-xs);
+}
+/* 识别完的子任务整行可点（直接打开预览）：给出可点的反馈，键盘也能聚焦到 */
+.batch-child-row.clickable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.batch-child-row.clickable:hover {
+  background: var(--surface-hover);
+}
+.batch-child-row.clickable:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+/* 行尾箭头：不用点上去也能看出这行打得开。不可点的行没有这个元素，所以不用再判断 */
+.batch-child-open {
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+.batch-child-row.clickable:hover .batch-child-open,
+.batch-child-row.clickable:hover .batch-child-title {
+  color: var(--primary);
 }
 .batch-child-position,
 .batch-loading {
@@ -3433,7 +3623,7 @@ button.timecode:hover:not(:disabled) {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "title actions"
-      "platform actions"
+      "origin platform"
       "word date";
     gap: 8px 12px;
     min-height: 96px;
@@ -3455,6 +3645,9 @@ button.timecode:hover:not(:disabled) {
     white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+  }
+  .library-row .origin-cell {
+    grid-area: origin;
   }
   .library-row .platform-cell {
     grid-area: platform;
@@ -3531,6 +3724,10 @@ button.timecode:hover:not(:disabled) {
   .batch-child-row .platform-badge {
     display: none;
   }
+  /* 窄屏没有 hover，箭头意义不大，还会和状态标签挤在同一列 */
+  .batch-child-open {
+    display: none;
+  }
   .batch-child-main {
     grid-column: 3;
   }
@@ -3543,7 +3740,6 @@ button.timecode:hover:not(:disabled) {
     overflow: visible;
     white-space: normal;
   }
-  .batch-child-row .text-button,
   .batch-child-row .status-chip {
     grid-column: 3;
     justify-self: start;

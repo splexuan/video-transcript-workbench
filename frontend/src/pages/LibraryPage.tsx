@@ -1,4 +1,4 @@
-import { Film, FileText, Search, Trash2 } from 'lucide-react'
+import { ChevronDown, Film, FileText, LoaderCircle, Search, Trash2 } from 'lucide-react'
 import { useDeferredValue, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -15,23 +15,40 @@ function dateLabel(value: string) {
   }).format(new Date(value))
 }
 
+/** 每页条数：和表格一屏能看下的量对齐，翻页时不会一次性渲染太多行。 */
+const PAGE_SIZE = 20
+
 export function LibraryPage() {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
+  const [platformFilter, setPlatformFilter] = useState('all')
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
+  // 下一页游标；为 null 表示已经到底
+  const [cursor, setCursor] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   // 点行先弹窗预览，要改内容再进编辑页
   const [previewId, setPreviewId] = useState('')
-  const [platformFilter, setPlatformFilter] = useState('all')
   // 正在删除的文案：按钮禁用，避免重复点击
   const [removingId, setRemovingId] = useState('')
 
+  // 搜索与平台筛选都交给服务端。分页之后前端只有一页数据，再本地过滤就变成
+  // 「只筛当前这一页」，用户会以为库里只有这几条。
+  const filterParams = {
+    q: deferredQuery || undefined,
+    platform: platformFilter === 'all' ? undefined : platformFilter,
+    limit: PAGE_SIZE,
+  }
+
   useEffect(() => {
     let active = true
-    api.documents(deferredQuery)
-      .then((items) => {
-        if (active) setDocuments(items)
+    api.documents(filterParams)
+      .then((page) => {
+        if (!active) return
+        setDocuments(page.items)
+        setCursor(page.next_cursor)
+        setError('')
       })
       .catch((reason: Error) => {
         if (active) setError(reason.message || '读取文案失败')
@@ -42,7 +59,28 @@ export function LibraryPage() {
     return () => {
       active = false
     }
-  }, [deferredQuery])
+    // filterParams 每次渲染都是新对象，所以按字段列依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deferredQuery, platformFilter])
+
+  async function loadMore() {
+    if (!cursor || loadingMore) return
+    setLoadingMore(true)
+    setError('')
+    try {
+      const page = await api.documents({ ...filterParams, cursor })
+      // 追加而不是替换；翻页期间被编辑过的文案会浮回第一页，再次出现在后续页时按 id 去重
+      setDocuments((current) => {
+        const seen = new Set(current.map((item) => item.id))
+        return [...current, ...page.items.filter((item) => !seen.has(item.id))]
+      })
+      setCursor(page.next_cursor)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '加载更多失败，请稍后再试')
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   async function remove(id: string) {
     if (!window.confirm('删除这条文案？分段、封面和关联的任务记录会一并删除，无法恢复。')) return
@@ -58,11 +96,6 @@ export function LibraryPage() {
     }
   }
 
-  // 平台筛选在前端做：文案库一次拉全量，切换筛选不需要再请求
-  const visible = platformFilter === 'all'
-    ? documents
-    : documents.filter((item) => item.platform === platformFilter)
-
   return (
     <div className="page">
       <header className="page-header">
@@ -76,7 +109,7 @@ export function LibraryPage() {
         </label>
         <label className="filter-select">
           <span className="sr-only">按平台筛选</span>
-          <select value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)}>
+          <select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value); setLoading(true); setError('') }}>
             <option value="all">全部平台</option>
             <option value="bilibili">B站</option>
             <option value="douyin">抖音</option>
@@ -90,19 +123,19 @@ export function LibraryPage() {
       <section className="panel library-panel">
         {loading ? (
           <LoadingState label="正在读取文案…" rows={5} />
-        ) : visible.length === 0 ? (
+        ) : documents.length === 0 ? (
           <EmptyState
             icon={FileText}
-            title={documents.length > 0 ? '这个平台下还没有文案' : query ? '没有找到相关文案' : '文案库还是空的'}
-            description={documents.length > 0 ? '换个平台，或把筛选切回「全部平台」。' : query ? '换个关键词再试一次。' : '从工作台提交一个链接或导入本地文件，提取完成后会自动归档。'}
-            action={!query && documents.length === 0 ? <Link className="primary-button inline" to="/">开始提取</Link> : undefined}
+            title={query ? '没有找到相关文案' : platformFilter !== 'all' ? '这个平台下还没有文案' : '文案库还是空的'}
+            description={query ? '换个关键词再试一次。' : platformFilter !== 'all' ? '换个平台，或把筛选切回「全部平台」。' : '从工作台提交一个链接或导入本地文件，提取完成后会自动归档。'}
+            action={!query && platformFilter === 'all' ? <Link className="primary-button inline" to="/">开始提取</Link> : undefined}
           />
-        ) : (
+        ) : <>
           <div className="library-table" role="table" aria-label="文案列表">
             <div className="library-head" role="row">
-              <span>标题</span><span>平台</span><span>字数</span><span>最近更新</span><span className="sr-only">操作</span>
+              <span>标题</span><span>来源</span><span>平台</span><span>字数</span><span>最近更新</span><span className="sr-only">操作</span>
             </div>
-            {visible.map((document) => (
+            {documents.map((document) => (
               <Link
                 className="library-row"
                 to={`/documents/${document.id}`}
@@ -127,6 +160,15 @@ export function LibraryPage() {
                   <strong>{document.title}</strong>
                   {document.status === 'reviewed' && <span className="reviewed-badge" title="已标记为校对完成">已校对</span>}
                 </span>
+                {/* 来源单独成列：批量用主色、单条弱化，整页每行都挂标签才不会太吵 */}
+                <span className="origin-cell">
+                  <span
+                    className={`origin-badge ${document.source_kind}`}
+                    title={document.source_kind === 'batch' ? '来自批量提取' : '来自单条提取'}
+                  >
+                    {document.source_kind === 'batch' ? '批量' : '单条'}
+                  </span>
+                </span>
                 <span className="platform-cell"><PlatformBadge platform={document.platform} /></span>
                 <span className="word-cell"><span className="mobile-only">字数 </span>{document.word_count}</span>
                 <span className="date-cell">{dateLabel(document.updated_at)}</span>
@@ -146,7 +188,15 @@ export function LibraryPage() {
               </Link>
             ))}
           </div>
-        )}
+          {cursor && (
+            <div className="list-more">
+              <button className="secondary-button" type="button" onClick={() => void loadMore()} disabled={loadingMore}>
+                {loadingMore ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
+                {loadingMore ? '正在加载' : '加载更多'}
+              </button>
+            </div>
+          )}
+        </>}
       </section>
       {previewId && (
         <DocumentPreviewModal key={previewId} documentId={previewId} backTo="/library" backLabel="文案库" onClose={() => setPreviewId('')} />

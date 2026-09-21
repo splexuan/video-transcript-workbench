@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.application.pagination import encode_cursor, fetch_page
 from app.application.platforms import detect_platform, extract_source_url
 from app.application.text_formatting import reflow_segments
 from app.config import settings
@@ -22,6 +23,7 @@ from app.infrastructure.models import (
     Job,
     JobBatch,
     TranscriptSegment,
+    new_id,
 )
 from app.schemas import (
     JobBatchCreate,
@@ -64,7 +66,6 @@ def _build_job(
     payload: JobCreate,
     *,
     batch_position: int | None = None,
-    display_name: str | None = None,
 ) -> Job:
     # 用户经常把整段分享文案贴进来，先取出其中的链接再判定平台
     source = (
@@ -79,9 +80,15 @@ def _build_job(
         if spec is not None:
             # mode 是给旧逻辑和列表展示用的，按所选模型的引擎推导，保证含义一致
             mode = "accurate" if spec.engine == ModelEngine.FASTER_WHISPER else "fast"
+    # 队列里的名字用任务 ID 的前 8 位：链接和整段分享文案又长又乱，从内容推导的名字
+    # 也不可靠（同平台同域名的链接会重名）。短 ID 唯一、稳定，能和日志、批次详情对上，
+    # 识别出文案标题后界面会换成真正的标题。
+    # 本地文件例外：磁盘路径带随机前缀，界面上按文件名显示更可读，没必要换成 ID。
+    job_id = new_id()
     return Job(
+        id=job_id,
         batch_position=batch_position,
-        display_name=display_name,
+        display_name=job_id[:8] if payload.source_type == "url" else None,
         platform=platform.value,
         source_type=payload.source_type,
         source_value=source,
@@ -201,14 +208,146 @@ def get_job_batch(session: Session, batch_id: str) -> JobBatch | None:
     return session.scalar(stmt)
 
 
-def list_job_batches(session: Session, limit: int = 20) -> list[JobBatch]:
-    stmt = (
-        select(JobBatch)
-        .options(selectinload(JobBatch.jobs))
-        .order_by(JobBatch.created_at.desc())
-        .limit(limit)
-    )
-    return list(session.scalars(stmt))
+def list_jobs(
+    session: Session,
+    *,
+    standalone: bool = False,
+    statuses: list[str] | None = None,
+    limit: int,
+    cursor: str | None,
+) -> tuple[list[Job], str | None]:
+    """任务列表：按创建时间倒序分页。
+
+    筛选必须在服务端做，理由和文案库一样：分页之后前端只有一页数据，
+    本地过滤就变成「只筛这一页」，用户会以为队列里只有这几条。
+
+    - `standalone=True` 只回不属于任何批次的任务（队列页把它们与批次卡片分开展示）。
+    - `statuses` 收状态白名单（界面上的「进行中 / 已完成 / 失败」）。
+    """
+
+    stmt = select(Job)
+    if standalone:
+        stmt = stmt.where(Job.batch_id.is_(None))
+    if statuses:
+        stmt = stmt.where(Job.status.in_(statuses))
+    return fetch_page(session, stmt, Job.created_at, Job.id, limit=limit, cursor=cursor)
+
+
+# 批次状态是「算出来」的：控制位（暂停 / 取消）在批次上，完成 / 失败在子任务上，
+# 库里没有这一列。所以按状态筛选时条件下推不到 SQL，只能取出行逐条算（见下）。
+#
+# 一次扫多少行**原始**批次：不按 limit 走，因为 limit 是匹配结果的条数，
+# 命中率低时要扫更多原始行才能凑够一页。
+_BATCH_SCAN_CHUNK = 64
+# 一轮筛选最多扫多少行：极端情况下（库里几千个批次、只有最早那条匹配）不能无限
+# 往下翻，到上限就先把已凑到的返回，游标接着往下走，用户继续点「加载更多」。
+_MAX_BATCH_SCAN = 1000
+
+
+def _batch_counts(batch: JobBatch) -> dict[str, int]:
+    return {
+        status: sum(job.status == status for job in batch.jobs)
+        for status in ("queued", "running", "completed", "failed", "cancelled")
+    }
+
+
+def _derive_batch_status(batch: JobBatch, counts: dict[str, int]) -> str:
+    total = batch.expected_count
+    terminal_count = counts["completed"] + counts["failed"] + counts["cancelled"]
+    if batch.control_status == "cancelled":
+        return "cancelled"
+    if batch.control_status == "paused" and (counts["queued"] or counts["running"]):
+        return "paused"
+    if counts["running"]:
+        return "running"
+    if counts["queued"]:
+        # 暂停过后又有子任务跑完，说明这个批次推进过，不该退回「等待中」
+        return "running" if terminal_count else "queued"
+    if counts["completed"] == total:
+        return "completed"
+    if counts["completed"] and (counts["failed"] or counts["cancelled"]):
+        return "partial_failed"
+    if counts["failed"]:
+        return "failed"
+    return "cancelled"
+
+
+def batch_status(batch: JobBatch) -> str:
+    """批次对外的状态（派生值）。
+
+    只留这一份推导：详情序列化与列表筛选都走它，否则「筛出来的批次」和
+    「卡片上显示的状态」会变成两套口径。
+    """
+    return _derive_batch_status(batch, _batch_counts(batch))
+
+
+def list_job_batches(
+    session: Session,
+    *,
+    statuses: list[str] | None = None,
+    limit: int,
+    cursor: str | None,
+) -> tuple[list[JobBatch], str | None]:
+    """批次列表：按创建时间倒序分页，可先按状态筛选。
+
+    子任务一并取出（selectinload）：队列页展开批次时要立刻显示每一条，
+    一个批次最多 50 条，天然有界，不会把分页的意义抵消掉。
+
+    不筛状态时就是普通游标分页，条件直接下推到 SQL（绝大多数请求走这条路径）。
+
+    给了 statuses 时要绕一下：状态是算出来的（见 batch_status），SQL 里没有它，
+    只能按游标顺序往下扫、逐条算、匹配的留下，凑够 limit 条就停。关键是**回传的
+    游标指向「最后一条返回的批次」，而不是「最后扫过的那一行」**——同一个分片里
+    匹配的比 limit 多时，多出来的会在下一页被重新扫到，不会漏；重复扫的只是这一轮
+    跳过的行，代价可以忽略。反过来若按「扫过的位置」回传，那些多出来的匹配项就被
+    直接跳过了。
+
+    这样筛选和分页都不会把结果吃掉，代价是「命中率越低、一次扫描越多」。
+    """
+
+    stmt = select(JobBatch).options(selectinload(JobBatch.jobs))
+    if not statuses:
+        return fetch_page(
+            session, stmt, JobBatch.created_at, JobBatch.id, limit=limit, cursor=cursor
+        )
+
+    wanted = set(statuses)
+    matched: list[JobBatch] = []
+    scan_cursor = cursor
+    scanned = 0
+    reached_end = False
+    while len(matched) < limit and scanned < _MAX_BATCH_SCAN:
+        rows, chunk_cursor = fetch_page(
+            session,
+            stmt,
+            JobBatch.created_at,
+            JobBatch.id,
+            limit=_BATCH_SCAN_CHUNK,
+            cursor=scan_cursor,
+        )
+        if not rows:
+            reached_end = True
+            break
+        scanned += len(rows)
+        for batch in rows:
+            if batch_status(batch) in wanted:
+                matched.append(batch)
+                if len(matched) >= limit:
+                    break
+        if chunk_cursor is None:
+            # 库里再没有原始行了；但只有「这个分片也整个看完了」才算真的到底
+            reached_end = len(matched) < limit
+            break
+        scan_cursor = chunk_cursor
+
+    page = matched[:limit]
+    if not page:
+        # 一条都没匹配上：要么已经到底，要么到了扫描上限，让调用方接着往下翻
+        return [], None if reached_end else scan_cursor
+    if reached_end:
+        return page, None
+    last = page[-1]
+    return page, encode_cursor(last.created_at, last.id)
 
 
 def create_job_batch(
@@ -237,8 +376,11 @@ def create_job_batch(
             raise JobBatchIdempotencyConflict("该提交标识已用于另一份批次，请刷新后重试")
         return existing
 
+    batch_id = new_id()
     batch = JobBatch(
-        title=(payload.title or "").strip() or f"批量提取（{len(normalized_sources)} 条）",
+        id=batch_id,
+        # 批次名同样用 ID 前缀，不和内容绑定：批次里的第一条只是先后顺序，代表不了整批。
+        title=(payload.title or "").strip() or f"批次 {batch_id[:8]}",
         kind="url",
         control_status="active",
         expected_count=len(normalized_sources),
@@ -257,7 +399,6 @@ def create_job_batch(
                     prefer_subtitle=payload.prefer_subtitle,
                 ),
                 batch_position=position,
-                display_name=item.raw_source[:300],
             )
         )
     session.add(batch)
@@ -280,33 +421,15 @@ def create_job_batch(
 
 
 def serialize_job_batch(batch: JobBatch, *, include_jobs: bool = False) -> JobBatchRead:
-    counts = {
-        status: sum(job.status == status for job in batch.jobs)
-        for status in ("queued", "running", "completed", "failed", "cancelled")
-    }
+    counts = _batch_counts(batch)
     total = batch.expected_count
     terminal_count = counts["completed"] + counts["failed"] + counts["cancelled"]
     progress_units = terminal_count + sum(
         job.progress / 100 for job in batch.jobs if job.status == "running"
     )
     progress = round(progress_units / total * 100) if total else 0
-
-    if batch.control_status == "cancelled":
-        derived_status = "cancelled"
-    elif batch.control_status == "paused" and (counts["queued"] or counts["running"]):
-        derived_status = "paused"
-    elif counts["running"]:
-        derived_status = "running"
-    elif counts["queued"]:
-        derived_status = "running" if terminal_count else "queued"
-    elif counts["completed"] == total:
-        derived_status = "completed"
-    elif counts["completed"] and (counts["failed"] or counts["cancelled"]):
-        derived_status = "partial_failed"
-    elif counts["failed"]:
-        derived_status = "failed"
-    else:
-        derived_status = "cancelled"
+    # 状态推导只此一处：列表筛选用的是同一个函数，两边不会走偏
+    derived_status = _derive_batch_status(batch, counts)
 
     updated_at = max([batch.updated_at, *(job.updated_at for job in batch.jobs)])
     summary = JobBatchRead(
@@ -414,10 +537,23 @@ def retry_job(session: Session, job: Job) -> Job:
     )
 
 
-def list_documents(session: Session, query: str | None = None) -> list[Document]:
-    """文案列表；关键词同时匹配标题与正文，方便按记得的一句话找回文案。"""
+def list_documents(
+    session: Session,
+    *,
+    query: str | None = None,
+    platform: str | None = None,
+    limit: int,
+    cursor: str | None,
+) -> tuple[list[Document], str | None]:
+    """文案列表；关键词同时匹配标题与正文，方便按记得的一句话找回文案。
 
-    stmt = select(Document).order_by(Document.updated_at.desc())
+    筛选必须在服务端做：分页之后只拿到一页数据，前端再过滤就变成「只筛当前这一页」，
+    用户会以为库里只有这几条。按最近更新倒序分页，编辑过的文案会浮到最前面。
+    """
+
+    stmt = select(Document)
+    if platform:
+        stmt = stmt.where(Document.platform == platform)
     keyword = (query or "").strip()
     if keyword:
         matched_by_text = select(TranscriptSegment.document_id).where(
@@ -426,7 +562,20 @@ def list_documents(session: Session, query: str | None = None) -> list[Document]
         stmt = stmt.where(
             Document.title.contains(keyword) | Document.id.in_(matched_by_text)
         )
-    return list(session.scalars(stmt))
+    return fetch_page(
+        session, stmt, Document.updated_at, Document.id, limit=limit, cursor=cursor
+    )
+
+
+def list_document_titles(session: Session, ids: list[str]) -> list[Document]:
+    """按 id 批量取文档（调用方只用其中的 id 与标题）。
+
+    首页轮询要给任务行、批次行显示文案标题，为此把整个文案库拖回来是不必要的负担。
+    """
+
+    if not ids:
+        return []
+    return list(session.scalars(select(Document).where(Document.id.in_(ids))))
 
 
 def get_document(session: Session, document_id: str) -> Document | None:

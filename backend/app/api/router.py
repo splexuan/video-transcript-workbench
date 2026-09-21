@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.application.exporters import export_document
+from app.application.pagination import MAX_PAGE_SIZE, InvalidCursor
 from app.application.services import (
     TERMINAL_JOB_STATUSES,
     DocumentInUseError,
@@ -29,8 +30,10 @@ from app.application.services import (
     find_document_media,
     get_document,
     get_job_batch,
+    list_document_titles,
     list_documents,
     list_job_batches,
+    list_jobs,
     pause_job_batch,
     preflight_job_batch,
     read_settings,
@@ -52,6 +55,7 @@ from app.infrastructure.models import Document, Job, JobBatch
 from app.schemas import (
     DocumentDetail,
     DocumentRead,
+    DocumentTitleRead,
     DocumentUpdate,
     JobBatchCreate,
     JobBatchDetailRead,
@@ -60,6 +64,7 @@ from app.schemas import (
     JobBatchRead,
     JobCreate,
     JobRead,
+    Page,
     SegmentsReplace,
     SettingPatch,
 )
@@ -130,12 +135,26 @@ def enqueue_job_batch(payload: JobBatchCreate, session: SessionDep) -> JobBatchD
     return serialize_job_batch(batch, include_jobs=True)
 
 
-@router.get("/job-batches", response_model=list[JobBatchRead])
+@router.get("/job-batches", response_model=Page[JobBatchRead])
 def get_job_batches(
     session: SessionDep,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-) -> list[JobBatchRead]:
-    return [serialize_job_batch(batch) for batch in list_job_batches(session, limit)]
+    status: Annotated[list[str] | None, Query(max_length=10)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
+    cursor: Annotated[str | None, Query(max_length=256)] = None,
+) -> Page[JobBatchRead]:
+    try:
+        batches, next_cursor = list_job_batches(
+            session,
+            statuses=status,
+            limit=limit,
+            cursor=cursor,
+        )
+    except InvalidCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Page(
+        items=[serialize_job_batch(batch) for batch in batches],
+        next_cursor=next_cursor,
+    )
 
 
 def _job_batch_or_404(session: Session, batch_id: str) -> JobBatch:
@@ -237,13 +256,25 @@ async def upload_job(
         await file.close()
 
 
-@router.get("/jobs", response_model=list[JobRead])
+@router.get("/jobs", response_model=Page[JobRead])
 def get_jobs(
     session: SessionDep,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> list[Job]:
-    stmt = select(Job).order_by(Job.created_at.desc()).limit(limit)
-    return list(session.scalars(stmt))
+    standalone: Annotated[bool, Query()] = False,
+    status: Annotated[list[str] | None, Query(max_length=10)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+    cursor: Annotated[str | None, Query(max_length=256)] = None,
+) -> Page[JobRead]:
+    try:
+        jobs, next_cursor = list_jobs(
+            session,
+            standalone=standalone,
+            statuses=status,
+            limit=limit,
+            cursor=cursor,
+        )
+    except InvalidCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Page(items=jobs, next_cursor=next_cursor)
 
 
 @router.post(
@@ -296,12 +327,34 @@ def remove_job(job_id: str, session: SessionDep) -> dict[str, str | bool]:
     return {"id": job_id, "removed": True}
 
 
-@router.get("/documents", response_model=list[DocumentRead])
+@router.get("/documents", response_model=Page[DocumentRead])
 def documents(
     session: SessionDep,
     q: Annotated[str | None, Query(max_length=100)] = None,
+    platform: Annotated[str | None, Query(max_length=32)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
+    cursor: Annotated[str | None, Query(max_length=256)] = None,
+) -> Page[DocumentRead]:
+    try:
+        items, next_cursor = list_documents(
+            session, query=q, platform=platform, limit=limit, cursor=cursor
+        )
+    except InvalidCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Page(items=items, next_cursor=next_cursor)
+
+
+@router.get("/documents/titles", response_model=list[DocumentTitleRead])
+def document_titles(
+    session: SessionDep,
+    ids: Annotated[list[str] | None, Query(max_length=100)] = None,
 ) -> list[Document]:
-    return list_documents(session, q)
+    """只回 id 与标题：任务行、批次行要显示文案标题，不必为此把整个文案库拉回前端。
+
+    注意这条必须声明在 `/documents/{document_id}` 之前，否则会被当成一个文档 id。
+    """
+
+    return list_document_titles(session, ids or [])
 
 
 def _document_detail(session: Session, document: Document) -> DocumentDetail:

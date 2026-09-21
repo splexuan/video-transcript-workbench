@@ -1,3 +1,13 @@
+/**
+ * 列表接口的分页响应。
+ *
+ * `next_cursor` 为 null 表示已经到底；前端不要自己拼游标，把它原样回传即可。
+ */
+export interface Page<T> {
+  items: T[]
+  next_cursor: string | null
+}
+
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export interface Job {
@@ -73,6 +83,8 @@ export interface DocumentSummary {
   platform: string
   source_type: string
   source_value: string
+  /** 单条提取还是批量提取来的；文案库用它标注来源。 */
+  source_kind: 'single' | 'batch'
   status: 'processing' | 'draft' | 'reviewed' | 'exported'
   duration_seconds: number | null
   word_count: number
@@ -82,6 +94,12 @@ export interface DocumentSummary {
   has_cover: boolean
   created_at: string
   updated_at: string
+}
+
+/** 只含 id 与标题的轻量文档表示；任务行、批次行按它反查标题。 */
+export interface DocumentTitle {
+  id: string
+  title: string
 }
 
 export interface TranscriptSegment {

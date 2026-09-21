@@ -4,6 +4,7 @@ import type {
   CredentialStatus,
   DocumentDetail,
   DocumentSummary,
+  DocumentTitle,
   InstallProgress,
   Job,
   JobBatch,
@@ -11,8 +12,24 @@ import type {
   JobBatchPreflight,
   LoginStatus,
   ModelCatalog,
+  Page,
   RecognitionModel,
 } from '../types'
+
+/** 拼查询串；空值跳过，数组展开成重复参数（后端的 ids 用重复参数收）。 */
+function queryString(params: Record<string, string | number | boolean | null | undefined | string[]>) {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === '') continue
+    if (Array.isArray(value)) {
+      for (const item of value) search.append(key, item)
+      continue
+    }
+    search.set(key, String(value))
+  }
+  const text = search.toString()
+  return text ? `?${text}` : ''
+}
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -31,7 +48,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ status: string; name: string; version: string }>('/api/health'),
-  jobs: (limit = 50) => request<Job[]>(`/api/jobs?limit=${limit}`),
+  jobs: (params: { standalone?: boolean; status?: string[]; limit?: number; cursor?: string | null } = {}) =>
+    request<Page<Job>>(`/api/jobs${queryString(params)}`),
   createJob: (payload: { source_type: 'url' | 'file'; source: string; mode: string; model_id?: string | null; prefer_subtitle?: boolean }) =>
     request<Job>('/api/jobs', { method: 'POST', body: JSON.stringify(payload) }),
   preflightBatch: (sources: string[]) =>
@@ -50,7 +68,9 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
-  batches: (limit = 20) => request<JobBatch[]>(`/api/job-batches?limit=${limit}`),
+  /** 批次的 status 是派生值（含 paused / partial_failed），取值集合与任务不同。 */
+  batches: (params: { status?: string[]; limit?: number; cursor?: string | null } = {}) =>
+    request<Page<JobBatch>>(`/api/job-batches${queryString(params)}`),
   batch: (id: string) => request<JobBatchDetail>(`/api/job-batches/${id}`),
   pauseBatch: (id: string) =>
     request<JobBatchDetail>(`/api/job-batches/${id}/pause`, { method: 'POST' }),
@@ -79,8 +99,11 @@ export const api = {
   /** 删除终态任务记录；进行中的任务要先取消。 */
   deleteJob: (id: string) =>
     request<{ id: string; removed: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
-  documents: (query = '') =>
-    request<DocumentSummary[]>(`/api/documents${query ? `?q=${encodeURIComponent(query)}` : ''}`),
+  documents: (params: { q?: string; platform?: string; limit?: number; cursor?: string | null } = {}) =>
+    request<Page<DocumentSummary>>(`/api/documents${queryString(params)}`),
+  /** 只回 id 与标题：任务行、批次行要显示文案标题，不必把整个文案库拉回来。 */
+  documentTitles: (ids: string[]) =>
+    request<DocumentTitle[]>(`/api/documents/titles${queryString({ ids })}`),
   document: (id: string) => request<DocumentDetail>(`/api/documents/${id}`),
   saveDocument: (id: string, payload: Partial<Pick<DocumentSummary, 'title' | 'status'>>) =>
     request<DocumentSummary>(`/api/documents/${id}`, {

@@ -69,6 +69,9 @@ _LATER_COLUMNS: dict[str, dict[str, str]] = {
         "uploader": "VARCHAR(200)",
         "description": "TEXT",
         "cover_file": "VARCHAR(120)",
+        # 带 DEFAULT 是必要的：老库补列时，SQLite 会用它填满已有行，
+        # 否则历史文案的 source_kind 会是 NULL，接口校验直接失败。
+        "source_kind": "VARCHAR(16) DEFAULT 'single'",
     },
 }
 
@@ -94,11 +97,28 @@ def _add_missing_columns() -> None:
             connection.exec_driver_sql(ddl)
 
 
+def _backfill_document_source_kind() -> None:
+    """给老库回填文案来源。
+
+    `documents.source_kind` 是新加的列，ALTER TABLE 之后历史行一律是默认值
+    'single'，但其中一部分本来就是批次跑出来的。按关联任务回填一次，免得文案库
+    把批量提取来的文案标成「单条」。幂等：只把名下有批次任务的 single 改成 batch。
+    """
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE documents SET source_kind = 'batch' WHERE source_kind = 'single' "
+            "AND id IN (SELECT document_id FROM jobs "
+            "WHERE batch_id IS NOT NULL AND document_id IS NOT NULL)"
+        )
+
+
 def init_database() -> None:
     from app.infrastructure import models  # noqa: F401
 
     Base.metadata.create_all(engine)
     _add_missing_columns()
+    _backfill_document_source_kind()
 
 
 def get_session() -> Generator[Session, None, None]:

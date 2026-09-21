@@ -25,6 +25,9 @@ class Document(Base):
     platform: Mapped[str] = mapped_column(String(32), default="unknown", index=True)
     source_type: Mapped[str] = mapped_column(String(16))
     source_value: Mapped[str] = mapped_column(Text)
+    # 这条文案是单条提取还是批量提取来的：'single' | 'batch'。与 source_type 区分开——
+    # source_type 说的是来源形态（链接 / 本地文件），这里说的是用户当初怎么提交的。
+    source_kind: Mapped[str] = mapped_column(String(16), default="single")
     status: Mapped[str] = mapped_column(String(24), default="processing", index=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 来源作品的元信息：作者、作品介绍，以及封面图文件名（文件在数据目录的 covers/ 下）

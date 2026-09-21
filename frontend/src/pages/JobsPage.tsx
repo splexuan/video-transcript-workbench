@@ -1,24 +1,15 @@
-import { AlertTriangle, Ban, ChevronDown, ChevronUp, Cpu, FileText, ListTodo, LoaderCircle, Pause, Play, RotateCcw, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, FileText, ListTodo, LoaderCircle, Pause, Play, RotateCcw, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import { DocumentPreviewModal } from '../components/DocumentPreviewModal'
 import { EmptyState } from '../components/EmptyState'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { api } from '../lib/api'
+import { batchStatusLabels, isOpenBatch, isPossiblyStalled, normalizedProgress, updatedAtFormatter } from '../lib/jobBatch'
 import { jobDisplayTitle } from '../lib/jobDisplay'
 import { jobStatusLabels, shortModelName, stageLabels } from '../lib/labels'
-import type { DocumentSummary, Job, JobBatch, JobBatchDetail } from '../types'
-
-const batchStatusLabels: Record<string, string> = {
-  queued: '等待中',
-  running: '进行中',
-  paused: '已暂停',
-  completed: '已完成',
-  partial_failed: '部分失败',
-  failed: '失败',
-  cancelled: '已取消',
-}
+import type { DocumentTitle, Job, JobBatch, JobBatchDetail } from '../types'
 
 // 说清「为什么用了识别模型」：只有 B站可能带字幕，本地文件与其它平台都只能本地转写。
 function sourceHint(job: Job) {
@@ -38,55 +29,144 @@ const createdAtFormatter = new Intl.DateTimeFormat('zh-CN', {
   hour12: false,
 })
 
-const updatedAtFormatter = new Intl.DateTimeFormat('zh-CN', {
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hour12: false,
-})
+/** 每页条数：队列是流水列表，一页够看一屏历史即可。 */
+const PAGE_SIZE = 20
 
-const stalledAfterMs = 5 * 60 * 1000
-
-function isPossiblyStalled(job: Job) {
-  if (job.status !== 'running') return false
-  const updatedAt = new Date(job.updated_at).getTime()
-  return Number.isFinite(updatedAt) && Date.now() - updatedAt > stalledAfterMs
+/**
+ * 把一页并进已有列表，按 id 去重。
+ *
+ * `head` 用于「第一页常刷新」：新数据放前面，已经翻出来的旧页保持在后；
+ * `tail` 用于「加载更多」：新一页接在末尾。两种方向共用同一套去重规则，
+ * 免得翻页途中数据变动导致同一行出现两次。
+ */
+function mergePage<T extends { id: string }>(page: T[], current: T[], position: 'head' | 'tail'): T[] {
+  const incoming = new Set(page.map((item) => item.id))
+  return position === 'head'
+    ? [...page, ...current.filter((item) => !incoming.has(item.id))]
+    : [...current, ...page.filter((item) => !incoming.has(item.id))]
 }
 
-function normalizedProgress(job: Job) {
-  return Math.min(100, Math.max(0, job.progress))
+/** 界面上的状态筛选 → 后端状态白名单；返回 undefined 表示不筛。 */
+function statusQuery(filter: string): string[] | undefined {
+  if (filter === 'active') return ['queued', 'running']
+  if (filter === 'failed') return ['failed', 'cancelled']
+  if (filter === 'completed') return ['completed']
+  return undefined
+}
+
+/**
+ * 批次是另一套状态取值，不能复用任务那套口径：
+ * 暂停的批次还没结束、仍可继续，算「进行中」；部分失败的批次算「失败」。
+ */
+function batchStatusQuery(filter: string): string[] | undefined {
+  if (filter === 'active') return ['queued', 'running', 'paused']
+  if (filter === 'failed') return ['failed', 'partial_failed', 'cancelled']
+  if (filter === 'completed') return ['completed']
+  return undefined
 }
 
 export function JobsPage() {
   const [searchParams] = useSearchParams()
   const [jobs, setJobs] = useState<Job[]>([])
+  const [jobCursor, setJobCursor] = useState<string | null>(null)
   const [batches, setBatches] = useState<JobBatch[]>([])
+  const [batchCursor, setBatchCursor] = useState<string | null>(null)
   const [expandedBatchId, setExpandedBatchId] = useState(searchParams.get('batch') ?? '')
   const [batchDetail, setBatchDetail] = useState<JobBatchDetail | null>(null)
-  const [documents, setDocuments] = useState<DocumentSummary[]>([])
+  // 任务行要显示的文案标题：按涉及的 document_id 精确查，不再拉整个文案库
+  const [titles, setTitles] = useState<DocumentTitle[]>([])
   const [error, setError] = useState('')
+  // 正在「加载更多」的列表（空串表示没有）
+  const [loadingMore, setLoadingMore] = useState('')
   // 「打开文案」先弹窗预览，要改再进编辑页
   const [previewId, setPreviewId] = useState('')
   // 正在执行取消/删除/重试的任务：按钮禁用，避免重复点击
   const [busyId, setBusyId] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
 
-  function load() {
-    Promise.all([api.jobs(200), api.documents(), api.batches()])
-      .then(([nextJobs, nextDocuments, nextBatches]) => {
-        setJobs(nextJobs)
-        setDocuments(nextDocuments)
-        setBatches(nextBatches)
+  // 第一页定时刷新（状态要实时），已经翻出来的旧页接在后面——否则每 2.5 秒都会把
+  // 用户点出来的历史冲掉。原来的做法是一次拉 200 条，第 201 条在界面上永远看不到。
+  function refresh(reset = false) {
+    Promise.all([
+      api.jobs({
+        // 批次子任务归批次卡片展示，要在服务端排掉：否则一页的配额被它们吃掉大半
+        standalone: true,
+        status: statusQuery(statusFilter),
+        limit: PAGE_SIZE,
+      }),
+      api.batches({ status: batchStatusQuery(statusFilter), limit: PAGE_SIZE }),
+    ])
+      .then(([jobsPage, batchesPage]) => {
+        if (reset) {
+          // 换筛选：旧条件下的页不能留在新列表里，游标也从第一页重来
+          setJobs(jobsPage.items)
+          setBatches(batchesPage.items)
+          setJobCursor(jobsPage.next_cursor)
+          setBatchCursor(batchesPage.next_cursor)
+        } else {
+          setJobs((current) => mergePage(jobsPage.items, current, 'head'))
+          setBatches((current) => mergePage(batchesPage.items, current, 'head'))
+          // 游标只补一次：已经翻过页就不能再用第一页的游标覆盖，那会跳过中间几页
+          setJobCursor((current) => current ?? jobsPage.next_cursor)
+          setBatchCursor((current) => current ?? batchesPage.next_cursor)
+        }
         setError('')
       })
-      .catch((reason: Error) => setError(reason.message))
+      .catch((reason: Error) => setError(reason.message || '读取任务失败'))
   }
 
   useEffect(() => {
-    load()
-    const timer = window.setInterval(load, 2500)
+    refresh(true)
+    const timer = window.setInterval(() => refresh(), 2500)
     return () => window.clearInterval(timer)
-  }, [])
+    // refresh 每次渲染都会重建，放进依赖会让定时器反复重装；真正要跟的是筛选条件
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter])
+
+  async function loadMore(kind: 'jobs' | 'batches') {
+    const cursor = kind === 'jobs' ? jobCursor : batchCursor
+    if (!cursor || loadingMore) return
+    setLoadingMore(kind)
+    setError('')
+    try {
+      if (kind === 'jobs') {
+        const page = await api.jobs({
+          standalone: true,
+          status: statusQuery(statusFilter),
+          limit: PAGE_SIZE,
+          cursor,
+        })
+        setJobs((current) => mergePage(page.items, current, 'tail'))
+        setJobCursor(page.next_cursor)
+      } else {
+        const page = await api.batches({ status: batchStatusQuery(statusFilter), limit: PAGE_SIZE, cursor })
+        setBatches((current) => mergePage(page.items, current, 'tail'))
+        setBatchCursor(page.next_cursor)
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '加载更多失败，请稍后再试')
+    } finally {
+      setLoadingMore('')
+    }
+  }
+
+  const titleIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const job of [...jobs, ...(batchDetail?.jobs ?? [])]) {
+      if (job.document_id) ids.add(job.document_id)
+    }
+    return [...ids].sort()
+  }, [jobs, batchDetail])
+  const titleKey = titleIds.join(',')
+
+  useEffect(() => {
+    if (!titleKey) return
+    let active = true
+    api.documentTitles(titleKey.split(','))
+      .then((items) => active && setTitles(items))
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [titleKey])
 
   useEffect(() => {
     if (!expandedBatchId) return
@@ -105,7 +185,7 @@ export function JobsPage() {
     setError('')
     try {
       await api.cancelJob(id)
-      load()
+      void refresh()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '取消任务失败，请稍后再试')
     } finally {
@@ -120,7 +200,9 @@ export function JobsPage() {
     setError('')
     try {
       await api.deleteJob(id)
-      load()
+      // 先本地摘掉再刷第一页：否则在刷新结果回来之前，那一行还挂在列表上
+      setJobs((current) => current.filter((item) => item.id !== id))
+      void refresh()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '删除任务失败，请稍后再试')
     } finally {
@@ -133,7 +215,7 @@ export function JobsPage() {
     setError('')
     try {
       await api.retryJob(id)
-      load()
+      void refresh()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '重新提取失败，请稍后再试')
     } finally {
@@ -162,7 +244,7 @@ export function JobsPage() {
       } else if (expandedBatchId === id) {
         setBatchDetail(detail)
       }
-      load()
+      void refresh()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '批次操作失败，请稍后再试')
     } finally {
@@ -170,20 +252,8 @@ export function JobsPage() {
     }
   }
 
-  // 按状态筛选：任务多时快速定位失败项
-  const visibleJobs = jobs.filter((job) => {
-    if (job.batch_id) return false
-    if (statusFilter === 'active') return job.status === 'queued' || job.status === 'running'
-    if (statusFilter === 'failed') return job.status === 'failed' || job.status === 'cancelled'
-    if (statusFilter === 'completed') return job.status === 'completed'
-    return true
-  })
-  const visibleBatches = batches.filter((batch) => {
-    if (statusFilter === 'active') return ['queued', 'running', 'paused'].includes(batch.status)
-    if (statusFilter === 'failed') return ['failed', 'partial_failed', 'cancelled'].includes(batch.status)
-    if (statusFilter === 'completed') return batch.status === 'completed'
-    return true
-  })
+  // 任务与批次的筛选都已在服务端做完（批次状态是派生的，服务端边扫边算，
+  // 见后端 list_job_batches），`jobs` 与 `batches` 就是可见结果，本地不再过滤。
 
   return (
     <div className="page">
@@ -203,12 +273,12 @@ export function JobsPage() {
       <section className="panel jobs-page-panel">
         {jobs.length === 0 && batches.length === 0 ? (
           <EmptyState icon={ListTodo} title="队列空闲" description="新建一次提取后，可以在这里看到完整进度。" />
-        ) : visibleJobs.length === 0 && visibleBatches.length === 0 ? (
+        ) : jobs.length === 0 && batches.length === 0 ? (
           <EmptyState icon={ListTodo} title="这个状态下没有任务" description="把筛选切回「全部状态」看完整队列。" />
         ) : <>
-          {visibleBatches.map((batch) => {
+          {batches.map((batch) => {
             const isExpanded = expandedBatchId === batch.id
-            const active = ['queued', 'running', 'paused'].includes(batch.status)
+            const active = isOpenBatch(batch.status)
             const detail = isExpanded && batchDetail?.id === batch.id ? batchDetail : null
             return (
               <article className="batch-card" key={batch.id}>
@@ -261,11 +331,31 @@ export function JobsPage() {
                     {!detail ? (
                       <p className="batch-loading"><LoaderCircle className="spin" size={16} /> 正在读取子任务…</p>
                     ) : detail.jobs.map((job) => {
-                      const title = jobDisplayTitle(job, documents)
+                      const title = jobDisplayTitle(job, titles)
                       const progress = normalizedProgress(job)
                       const possiblyStalled = isPossiblyStalled(job)
+                      // 识别完、有文案的子任务整行可点，直接打开预览；还在跑或失败的行
+                      // 不接受点击，免得点上去没反应、看起来像坏了
+                      const documentId = job.status === 'completed' ? job.document_id : null
                       return (
-                        <div className="batch-child-row" key={job.id}>
+                        <div
+                          className={documentId ? 'batch-child-row clickable' : 'batch-child-row'}
+                          key={job.id}
+                          role={documentId ? 'button' : undefined}
+                          tabIndex={documentId ? 0 : undefined}
+                          aria-label={documentId ? `打开文案《${title}》` : undefined}
+                          onClick={documentId ? () => setPreviewId(documentId) : undefined}
+                          onKeyDown={
+                            documentId
+                              ? (event: ReactKeyboardEvent<HTMLDivElement>) => {
+                                  // 空格在容器上默认是滚动页面，得自己拦下来
+                                  if (event.key !== 'Enter' && event.key !== ' ') return
+                                  event.preventDefault()
+                                  setPreviewId(documentId)
+                                }
+                              : undefined
+                          }
+                        >
                           <span className={`job-state ${job.status}`} aria-hidden="true" />
                           <span className="batch-child-position">#{job.batch_position}</span>
                           <div className="batch-child-main">
@@ -301,9 +391,8 @@ export function JobsPage() {
                             )}
                           </div>
                           <span className={`status-chip ${job.status}`}>{jobStatusLabels[job.status] ?? job.status}</span>
-                          {job.status === 'completed' && job.document_id ? (
-                            <button className="text-button" type="button" onClick={() => setPreviewId(job.document_id as string)}><FileText size={14} /> 打开</button>
-                          ) : null}
+                          {/* 行尾箭头只给「点得开」的行，作为可点的视觉提示 */}
+                          {documentId && <ChevronRight className="batch-child-open" size={16} aria-hidden="true" />}
                         </div>
                       )
                     })}
@@ -312,8 +401,16 @@ export function JobsPage() {
               </article>
             )
           })}
-          {visibleJobs.map((job) => {
-          const title = jobDisplayTitle(job, documents)
+          {batchCursor && (
+            <div className="list-more">
+              <button className="secondary-button" type="button" onClick={() => void loadMore('batches')} disabled={loadingMore === 'batches'}>
+                {loadingMore === 'batches' ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
+                {loadingMore === 'batches' ? '正在加载' : '加载更多批次'}
+              </button>
+            </div>
+          )}
+          {jobs.map((job) => {
+          const title = jobDisplayTitle(job, titles)
           const cancellable = job.status === 'queued' || job.status === 'running'
           const deletable = !cancellable
           return (
@@ -372,6 +469,14 @@ export function JobsPage() {
             </article>
           )
           })}
+          {jobCursor && (
+            <div className="list-more">
+              <button className="secondary-button" type="button" onClick={() => void loadMore('jobs')} disabled={loadingMore === 'jobs'}>
+                {loadingMore === 'jobs' ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
+                {loadingMore === 'jobs' ? '正在加载' : '加载更多任务'}
+              </button>
+            </div>
+          )}
         </>}
       </section>
       {previewId && (

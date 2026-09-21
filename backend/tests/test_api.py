@@ -27,7 +27,7 @@ def test_create_and_list_job() -> None:
     assert created.status_code == 201
     assert created.json()["platform"] == "bilibili"
     assert jobs.status_code == 200
-    assert any(item["id"] == created.json()["id"] for item in jobs.json())
+    assert any(item["id"] == created.json()["id"] for item in jobs.json()["items"])
 
 
 def test_job_can_request_a_specific_model() -> None:

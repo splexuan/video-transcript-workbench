@@ -1,7 +1,7 @@
 import { AlertTriangle, FileText } from 'lucide-react'
 
 import { PlatformBadge } from './PlatformBadge'
-import { batchStatusLabels, isPossiblyStalled, jobDetailText, normalizedProgress, updatedAtFormatter } from '../lib/jobBatch'
+import { batchStatusLabels, isOpenBatch, isPossiblyStalled, jobDetailText, normalizedProgress, updatedAtFormatter } from '../lib/jobBatch'
 import { jobDisplayTitle } from '../lib/jobDisplay'
 import { jobStatusLabels, stageLabels } from '../lib/labels'
 import type { DocumentTitle, JobBatchDetail } from '../types'
@@ -37,19 +37,22 @@ export function BatchExecution({
         {batch.failed_count > 0 && ` · 失败 ${batch.failed_count}`}
         {batch.cancelled_count > 0 && ` · 取消 ${batch.cancelled_count}`}
       </p>
-      <div className="task-batch-progress">
-        <div
-          className="progress-track"
-          role="progressbar"
-          aria-label="批次进度"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={batch.progress}
-        >
-          <span style={{ width: `${batch.progress}%` }} />
+      {/* 与任务队列页同一个口径：批次结束后不再留一条停在 100% 的进度条 */}
+      {isOpenBatch(batch.status) && (
+        <div className="task-batch-progress">
+          <div
+            className="progress-track"
+            role="progressbar"
+            aria-label="批次进度"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={batch.progress}
+          >
+            <span style={{ width: `${batch.progress}%` }} />
+          </div>
+          <span>{batch.progress}%</span>
         </div>
-        <span>{batch.progress}%</span>
-      </div>
+      )}
 
       <ol className="task-batch-list">
         {batch.jobs.map((job) => {

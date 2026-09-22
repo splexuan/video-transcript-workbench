@@ -40,6 +40,23 @@ function cachedMode(): ThemeMode {
   return cached === 'dark' || cached === 'light' ? cached : 'system'
 }
 
+/**
+ * 主题一翻，几乎所有元素都在改 color / background-color / border-color，
+ * 每个带 transition 的元素会一起动，整页读起来是「糊」一下而不是干脆地切换。
+ * 这里在切换的那两帧挂上一条把 transition 全部关掉的样式，新配色落定后再移除。
+ */
+function withoutTransitions(apply: () => void) {
+  const override = document.createElement('style')
+  override.append(document.createTextNode('*,*::before,*::after{transition:none !important}'))
+  document.head.append(override)
+  apply()
+  // 读一次 offsetHeight 只是为了逼浏览器同步刷新样式：新配色要在覆盖仍生效时就落定
+  void document.body.offsetHeight
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => override.remove())
+  })
+}
+
 export function AppShell() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
@@ -66,8 +83,9 @@ export function AppShell() {
 
   useEffect(() => {
     const apply = () => {
-      const resolved = resolveTheme(mode)
-      document.documentElement.dataset.theme = resolved
+      withoutTransitions(() => {
+        document.documentElement.dataset.theme = resolveTheme(mode)
+      })
       if (mode !== 'system') localStorage.setItem('vtw-theme', mode)
     }
     apply()
@@ -140,7 +158,11 @@ export function AppShell() {
             aria-label={dark ? '切换浅色模式' : '切换深色模式'}
             title={dark ? '浅色模式' : '深色模式'}
           >
-            {dark ? <Sun size={18} /> : <Moon size={18} />}
+            {/* 状态变化图标：两个都留在 DOM 里做交叉淡化，不硬切可见性 */}
+            <span className="icon-swap" aria-hidden="true">
+              <Sun className={dark ? undefined : 'is-off'} size={18} />
+              <Moon className={dark ? 'is-off' : undefined} size={18} />
+            </span>
           </button>
         </div>
       </aside>

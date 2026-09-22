@@ -1,13 +1,15 @@
-import { ChevronDown, Download, Film, FileText, LoaderCircle, Search, Trash2, Users, X } from 'lucide-react'
+import { Download, Film, FileText, Search, Trash2, Users, X } from 'lucide-react'
 import { useDeferredValue, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { DocumentPreviewModal } from '../components/DocumentPreviewModal'
 import { EmptyState } from '../components/EmptyState'
 import { LoadingState } from '../components/LoadingState'
+import { LoadMore } from '../components/LoadMore'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { api } from '../lib/api'
 import { platformLabels } from '../lib/labels'
+import { useModalDismiss } from '../lib/useModalDismiss'
 import type { AuthorSummary, DocumentSummary } from '../types'
 
 function dateLabel(value: string) {
@@ -112,6 +114,9 @@ export function LibraryPage() {
     }
   }, [authorPanel, deferredAuthorQuery])
 
+  // Esc / 点遮罩 / 点关闭 都收起作者弹窗，并锁住背景滚动
+  useModalDismiss(authorPanel, () => setAuthorPanel(false))
+
   /** 选中一位作者：收起面板，列表只留他的文案。 */
   function pickAuthor(name: string) {
     setUploader(name)
@@ -208,6 +213,7 @@ export function LibraryPage() {
           <button
             className="secondary-button"
             type="button"
+            aria-haspopup="dialog"
             aria-expanded={authorPanel}
             onClick={() => setAuthorPanel((open) => !open)}
           >
@@ -240,37 +246,6 @@ export function LibraryPage() {
           </button>
         </div>
       </div>
-      {authorPanel && (
-        <section className="panel author-panel" aria-label="按作者浏览">
-          <div className="author-panel-head">
-            <label className="search-box">
-              <Search size={17} />
-              <span className="sr-only">搜索作者</span>
-              <input value={authorQuery} onChange={(event) => setAuthorQuery(event.target.value)} placeholder="搜索作者名" />
-            </label>
-            <small>
-              共 {authorTotal} 位作者
-              {authorTotal > authors.length ? `，按篇数显示前 ${authors.length} 位` : ''}
-            </small>
-          </div>
-          {authorError && <p className="form-message error" role="alert">{authorError}</p>}
-          {authors.length === 0 ? (
-            <p className="author-empty">
-              {authorQuery.trim() ? '没有匹配的作者，换个名字试试。' : '还没有带作者信息的文案。'}
-            </p>
-          ) : (
-            <div className="author-grid">
-              {authors.map((author) => (
-                <button className="author-card" type="button" key={author.name} onClick={() => pickAuthor(author.name)}>
-                  <strong title={author.name}>{author.name}</strong>
-                  <span>{author.count} 篇 · {author.total_words} 字</span>
-                  <span>最近 {dateLabel(author.latest_at)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
       {error && <p className="form-message error" role="alert">{error}</p>}
       <section className="panel library-panel">
         {loading ? (
@@ -376,16 +351,65 @@ export function LibraryPage() {
               </Link>
             ))}
           </div>
-          {cursor && (
-            <div className="list-more">
-              <button className="secondary-button" type="button" onClick={() => void loadMore()} disabled={loadingMore}>
-                {loadingMore ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
-                {loadingMore ? '正在加载' : '加载更多'}
-              </button>
-            </div>
-          )}
+          {cursor && <LoadMore label="加载更多" loading={loadingMore} onLoad={() => void loadMore()} />}
         </>}
       </section>
+      {/* 按作者浏览做成弹窗：作者可能有上百位，铺在页面里会把下面的文案列表整个顶下去 */}
+      {authorPanel && (
+        <div className="modal-overlay" onClick={() => setAuthorPanel(false)} role="presentation">
+          <section
+            className="modal-dialog author-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-label="按作者浏览"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="modal-head">
+              <div className="modal-title">
+                <Users size={18} />
+                <strong>按作者浏览</strong>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setAuthorPanel(false)} aria-label="关闭作者列表">
+                <X size={17} />
+              </button>
+            </header>
+            <div className="modal-body">
+              <div className="author-picker-head">
+                <label className="search-box">
+                  <Search size={17} />
+                  <span className="sr-only">搜索作者</span>
+                  <input
+                    autoFocus
+                    value={authorQuery}
+                    onChange={(event) => setAuthorQuery(event.target.value)}
+                    placeholder="搜索作者名"
+                  />
+                </label>
+                <small>
+                  共 {authorTotal} 位作者
+                  {authorTotal > authors.length ? `，按篇数显示前 ${authors.length} 位` : ''}
+                </small>
+              </div>
+              {authorError && <p className="form-message error" role="alert">{authorError}</p>}
+              {authors.length === 0 ? (
+                <p className="author-empty">
+                  {authorQuery.trim() ? '没有匹配的作者，换个名字试试。' : '还没有带作者信息的文案。'}
+                </p>
+              ) : (
+                <div className="author-grid">
+                  {authors.map((author) => (
+                    <button className="author-card" type="button" key={author.name} onClick={() => pickAuthor(author.name)}>
+                      <strong title={author.name}>{author.name}</strong>
+                      <span>{author.count} 篇 · {author.total_words} 字</span>
+                      <span>最近 {dateLabel(author.latest_at)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       {previewId && (
         <DocumentPreviewModal key={previewId} documentId={previewId} backTo="/library" backLabel="文案库" onClose={() => setPreviewId('')} />
       )}

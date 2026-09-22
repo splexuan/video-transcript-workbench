@@ -294,7 +294,7 @@ export function WorkbenchPage() {
             <p>支持 B站、抖音、快手、小红书、视频号的链接或分享文案，也可以导入本地音视频文件</p>
           </div>
         </div>
-        <div className="capture-mode-switch" role="radiogroup" aria-label="提取方式">
+        <div className="segmented-switch" role="radiogroup" aria-label="提取方式">
           <button
             type="button"
             role="radio"

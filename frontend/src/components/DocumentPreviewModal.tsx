@@ -1,11 +1,12 @@
 import { Bot, Copy, Download, ExternalLink, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { PlatformBadge } from './PlatformBadge'
 import { api } from '../lib/api'
 import { describeSummaryOutcome, openDeepSeekSummary, type SummaryOutcome } from '../lib/deepseek'
 import { segmentsToPlainText } from '../lib/textFormatting'
+import { useModalDismiss } from '../lib/useModalDismiss'
 import type { DocumentDetail } from '../types'
 
 const updatedAtFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -34,6 +35,20 @@ export function DocumentPreviewModal({
   const [copied, setCopied] = useState(false)
   // AI 总结的临时反馈：贴在按钮上（与「已复制」同一套做法，弹窗里不再加提示条）
   const [summaryNote, setSummaryNote] = useState('')
+  // 退场期间为 true：样式里据此播 150ms 的淡出 + 上收，然后才真正卸载
+  const [closing, setClosing] = useState(false)
+  const closingRef = useRef(false)
+
+  /**
+   * 关闭前先播一段轻退场再卸载。退出要比进入轻——用户此刻的注意力已经在下一件事上，
+   * 弹窗不该用一整套进场动效的镜像把注意力抢回来。
+   */
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return
+    closingRef.current = true
+    setClosing(true)
+    window.setTimeout(onClose, 150)
+  }, [onClose])
 
   // 组件以 key={documentId} 挂载：切换预览对象时整体重建，无需在 effect 里重置状态
   useEffect(() => {
@@ -51,24 +66,8 @@ export function DocumentPreviewModal({
     }
   }, [documentId])
 
-  // Esc 关闭；弹窗期间锁住背景滚动
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    // 锁滚动后滚动条会消失、视口宽出约 15px，背景页与居中的弹窗都会跟着平移一下。
-    // 量出这段宽度写进 CSS 变量，由样式表补成内边距抵消掉；必须在设 overflow 之前量。
-    const gap = window.innerWidth - document.documentElement.clientWidth
-    const root = document.documentElement
-    document.body.style.overflow = 'hidden'
-    if (gap > 0) root.style.setProperty('--scroll-lock-gap', `${gap}px`)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
-      root.style.removeProperty('--scroll-lock-gap')
-    }
-  }, [onClose])
+  // Esc 关闭 + 弹窗期间锁住背景滚动，两条都由 useModalDismiss 统一处理
+  useModalDismiss(true, requestClose)
 
   async function copy() {
     if (!detail) return
@@ -114,9 +113,9 @@ export function DocumentPreviewModal({
   if (!detail && !error) return null
 
   return (
-    <div className="modal-overlay" onClick={onClose} role="presentation">
+    <div className={closing ? 'modal-overlay closing' : 'modal-overlay'} onClick={requestClose} role="presentation">
       <section
-        className="modal-dialog"
+        className={closing ? 'modal-dialog closing' : 'modal-dialog'}
         role="dialog"
         aria-modal="true"
         aria-label="文案预览"
@@ -127,7 +126,7 @@ export function DocumentPreviewModal({
             <strong title={detail?.title}>{detail?.title ?? '无法预览'}</strong>
             {detail && <PlatformBadge platform={detail.platform} />}
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭预览">
+          <button className="icon-button" type="button" onClick={requestClose} aria-label="关闭预览">
             <X size={17} />
           </button>
         </header>
@@ -181,7 +180,7 @@ export function DocumentPreviewModal({
                 className="primary-button"
                 to={`/documents/${documentId}`}
                 state={{ from: backTo, label: backLabel }}
-                onClick={onClose}
+                onClick={requestClose}
               >
                 <ExternalLink size={15} /> 打开编辑
               </Link>

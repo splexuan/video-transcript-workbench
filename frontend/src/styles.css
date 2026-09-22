@@ -29,11 +29,14 @@
   --danger: #b3453c;
   --danger-soft: #fbeae7;
 
-  /* 字阶：7 档，最小 12px */
+  /* 字阶：最小 12px，逐档递增 */
   --text-2xs: 12px;
   --text-xs: 13px;
   --text-sm: 14px;
   --text-md: 15px;
+  /* 介于界面正文与 --text-lg 之间的一档：字幕逐行与窄屏正文用它。
+     之前只被引用、没有定义，引用处会退化成继承字号 */
+  --text-base: 16px;
   --text-lg: 18px;
   --text-xl: 22px;
   --text-2xl: 28px;
@@ -272,7 +275,7 @@ button:disabled {
   background: var(--primary);
   font-size: var(--text-sm);
   font-weight: var(--weight-strong);
-  transition: background var(--ease), border-color var(--ease);
+  transition: background-color var(--ease), border-color var(--ease);
 }
 .new-task-button:hover {
   border-color: var(--primary-hover);
@@ -293,7 +296,7 @@ button:disabled {
   color: var(--text-secondary);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  transition: color var(--ease), background var(--ease);
+  transition: color var(--ease), background-color var(--ease);
 }
 .nav-item:hover:not(.active) {
   color: var(--text);
@@ -360,7 +363,7 @@ button:disabled {
   border-radius: var(--radius);
   color: var(--text-secondary);
   background: var(--surface);
-  transition: color var(--ease), background var(--ease), border-color var(--ease);
+  transition: color var(--ease), background-color var(--ease), border-color var(--ease);
 }
 .icon-button:hover {
   color: var(--text);
@@ -383,6 +386,13 @@ button:disabled {
   padding-right: calc(var(--overlay-padding) + var(--scroll-lock-gap, 0px));
   background: rgba(34, 29, 23, 0.45);
   animation: modal-fade var(--ease);
+  /* 退场比进场轻：150ms 淡出即可，位移只给一点点方向感 */
+  transition-property: opacity;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+.modal-overlay.closing {
+  opacity: 0;
 }
 .modal-dialog {
   display: flex;
@@ -395,6 +405,18 @@ button:disabled {
   box-shadow: var(--shadow-md);
   overflow: hidden;
   animation: modal-rise var(--ease);
+  transition-property: opacity, transform;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+/* 收起时向上收 12px：够表达「退回列表」，又不抢用户已经移开的注意力 */
+.modal-dialog.closing {
+  opacity: 0;
+  transform: translateY(-12px);
+}
+/* 作者选择弹窗比文案预览窄：里面是一格格等宽卡片，太宽一行会被拉得不好扫 */
+.modal-dialog.author-picker {
+  width: min(680px, 100%);
 }
 .modal-head {
   display: flex;
@@ -596,16 +618,23 @@ button:disabled {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
-.capture-mode-switch {
+/* 分段控件：一组互斥的选择（工作台的提取方式、任务队列的类型 tab）。
+   间距不写在这里——两处的外框语境不同，各自由所在容器安排 */
+.segmented-switch {
   display: inline-flex;
   gap: 4px;
-  margin: -2px 0 16px;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  /* 同心圆角：外框 = 内层按钮的 --radius-sm + 这 4px 内边距，
+     否则选中块的四角和外壳的圆角错开，看起来像没对齐 */
+  border-radius: calc(var(--radius-sm) + 4px);
   background: var(--surface-subtle);
 }
-.capture-mode-switch button {
+/* 工作台里它夹在卡片标题和表单之间，需要自己的上下间距 */
+.capture-card > .segmented-switch {
+  margin: -2px 0 16px;
+}
+.segmented-switch button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -619,7 +648,7 @@ button:disabled {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
 }
-.capture-mode-switch button.active {
+.segmented-switch button.active {
   color: var(--primary);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
@@ -734,7 +763,7 @@ button:disabled {
   border-radius: var(--radius);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  transition: background var(--ease), color var(--ease), border-color var(--ease);
+  transition: background-color var(--ease), color var(--ease), border-color var(--ease);
 }
 .primary-button {
   padding: 0 18px;
@@ -808,7 +837,7 @@ button:disabled {
   border-radius: var(--radius);
   background: var(--surface);
   text-align: left;
-  transition: border-color var(--ease), background var(--ease), box-shadow var(--ease);
+  transition: border-color var(--ease), background-color var(--ease), box-shadow var(--ease);
 }
 .model-option:hover:not(:disabled) {
   border-color: var(--border-strong);
@@ -906,7 +935,7 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-subtle);
-  transition: border-color var(--ease), background var(--ease);
+  transition: border-color var(--ease), background-color var(--ease);
 }
 .subtitle-toggle:hover {
   border-color: var(--border-strong);
@@ -1048,7 +1077,7 @@ button:disabled {
   min-height: 64px;
   padding: 8px 6px;
   border-bottom: 1px solid var(--border);
-  transition: background var(--ease);
+  transition: background-color var(--ease);
 }
 .document-row:last-child {
   border-bottom: 0;
@@ -1431,7 +1460,7 @@ span.task-exec-cover {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background var(--ease);
+  transition: background-color var(--ease);
 }
 .job-row.clickable:hover {
   background: var(--surface-subtle);
@@ -1577,7 +1606,7 @@ span.task-exec-cover {
   color: var(--text-secondary);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
-  transition: background var(--ease);
+  transition: background-color var(--ease);
 }
 .library-row .row-actions {
   display: flex;
@@ -1672,7 +1701,7 @@ span.task-exec-cover {
   -webkit-mask: var(--chevron) center / contain no-repeat;
   mask: var(--chevron) center / contain no-repeat;
   pointer-events: none;
-  transition: background var(--ease);
+  transition: background-color var(--ease);
 }
 .filter-select:hover::after,
 .filter-select:focus-within::after {
@@ -1750,23 +1779,19 @@ span.task-exec-cover {
   outline-offset: 2px;
   border-radius: 2px;
 }
-/* 按作者浏览：面板里的作者卡片。作者数是内容量级的零头，卡片比表格更好扫 */
-.author-panel {
-  display: grid;
-  gap: 14px;
-  padding: 16px 20px;
-}
-.author-panel-head {
+/* 按作者浏览弹窗的表头：搜索框在左、总数在右。作者数是内容量级的零头，卡片比表格更好扫 */
+.author-picker-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 14px;
 }
-.author-panel-head .search-box {
+.author-picker-head .search-box {
   max-width: 320px;
 }
-.author-panel-head small {
+.author-picker-head small {
   color: var(--text-muted);
   font-size: var(--text-xs);
 }
@@ -1786,7 +1811,7 @@ span.task-exec-cover {
   font-size: var(--text-xs);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--ease), background var(--ease);
+  transition: border-color var(--ease), background-color var(--ease);
 }
 .author-card strong {
   overflow: hidden;
@@ -1870,7 +1895,6 @@ span.task-exec-cover {
   background: var(--surface-subtle);
 }
 .batch-card-head,
-.batch-card-foot,
 .batch-actions,
 .batch-progress-row {
   display: flex;
@@ -1878,6 +1902,18 @@ span.task-exec-cover {
 }
 .batch-card-head {
   gap: 12px;
+  /* 右列与左边第一行标题对齐，所以整行按顶部对齐；竖着居中会飘在两行文字中间 */
+  align-items: flex-start;
+}
+/* 右列：状态芯片与操作按钮并成一行，和标题同一行。
+   叠成两行会把卡片头部撑到 24 + 6 + 34 = 64px，并排放只需 34px（由按钮高度决定） */
+.batch-card-side {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .batch-expand {
   display: grid;
@@ -1902,8 +1938,7 @@ span.task-exec-cover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.batch-title small,
-.batch-card-foot > span {
+.batch-title small {
   color: var(--text-muted);
   font-size: var(--text-2xs);
 }
@@ -1922,11 +1957,7 @@ span.task-exec-cover {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
-.batch-card-foot {
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-}
+
 .batch-actions {
   gap: 4px;
   flex-wrap: wrap;
@@ -1953,7 +1984,7 @@ span.task-exec-cover {
 /* 识别完的子任务整行可点（直接打开预览）：给出可点的反馈，键盘也能聚焦到 */
 .batch-child-row.clickable {
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background-color var(--ease);
 }
 .batch-child-row.clickable:hover {
   background: var(--surface-hover);
@@ -1965,7 +1996,7 @@ span.task-exec-cover {
 /* 行尾箭头：不用点上去也能看出这行打得开。不可点的行没有这个元素，所以不用再判断 */
 .batch-child-open {
   color: var(--text-muted);
-  transition: color 0.15s ease;
+  transition: color var(--ease);
 }
 .batch-child-row.clickable:hover .batch-child-open,
 .batch-child-row.clickable:hover .batch-child-title {
@@ -2061,7 +2092,7 @@ span.task-exec-cover {
   padding: 17px 12px;
   border-bottom: 1px solid var(--border);
   border-radius: var(--radius);
-  transition: background var(--ease), box-shadow var(--ease);
+  transition: background-color var(--ease), box-shadow var(--ease);
 }
 .job-card:hover {
   background: var(--surface-subtle);
@@ -2827,7 +2858,7 @@ select {
   height: 25px;
   border-radius: var(--radius-pill);
   background: var(--border-strong);
-  transition: background var(--ease);
+  transition: background-color var(--ease);
 }
 .toggle::after {
   content: "";
@@ -2936,7 +2967,7 @@ select {
   background: transparent;
   font-size: var(--text-lg);
   font-weight: var(--weight-medium);
-  transition: background var(--ease), border-color var(--ease);
+  transition: background-color var(--ease), border-color var(--ease);
 }
 .editor-title-group input:hover {
   background: var(--surface-subtle);
@@ -3032,6 +3063,13 @@ select {
   border-radius: var(--radius);
   object-fit: cover;
   background: var(--surface-subtle);
+  /* 图片统一压一圈极淡的中性描边：不要用调色板里的暖色，
+     暖色会吸到底色，在图片边缘读起来像脏边 */
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+}
+:root[data-theme="dark"] .source-cover {
+  outline-color: oklch(1 0 0 / 0.1);
 }
 /* 作品介绍完整展示：超长时由左栏整体滚动，不在这里截断 */
 .source-description {
@@ -3118,7 +3156,7 @@ select {
   color: var(--text-secondary);
   background: var(--surface);
   font-size: var(--text-2xs);
-  transition: color var(--ease), border-color var(--ease), background var(--ease);
+  transition: color var(--ease), border-color var(--ease), background-color var(--ease);
 }
 .source-copy:hover {
   border-color: var(--primary);
@@ -3237,7 +3275,7 @@ select {
   background: transparent;
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
-  transition: color var(--ease), background var(--ease);
+  transition: color var(--ease), background-color var(--ease);
 }
 .view-switch button:hover {
   color: var(--text);
@@ -3269,7 +3307,7 @@ select {
   text-indent: 2em;
   resize: none;
   overflow: hidden;
-  transition: border-color var(--ease), background var(--ease);
+  transition: border-color var(--ease), background-color var(--ease);
 }
 .fulltext-paragraph:hover {
   border-color: var(--border);
@@ -3364,7 +3402,7 @@ select {
   font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
-  transition: color var(--ease), background var(--ease), border-color var(--ease);
+  transition: color var(--ease), background-color var(--ease), border-color var(--ease);
 }
 .segment-row:hover .timecode,
 .segment-row:focus-within .timecode {
@@ -3420,7 +3458,7 @@ button.timecode:hover:not(:disabled) {
   /* 常显但很弱：让用户知道「这段被我改过」，悬停时才变清晰可点 */
   opacity: 0.35;
   cursor: pointer;
-  transition: opacity var(--ease), color var(--ease), background var(--ease);
+  transition: opacity var(--ease), color var(--ease), background-color var(--ease);
 }
 .segment-row:hover .segment-revert,
 .segment-revert:focus-visible {
@@ -3451,7 +3489,7 @@ button.timecode:hover:not(:disabled) {
   line-height: var(--leading-relaxed);
   /* 让文本域按内容自动撑高，避免按字数估算行数导致长句被裁掉 */
   field-sizing: content;
-  transition: border-color var(--ease), background var(--ease);
+  transition: border-color var(--ease), background-color var(--ease);
 }
 .segment-row textarea:hover {
   background: var(--surface-subtle);
@@ -3512,7 +3550,7 @@ button.timecode:hover:not(:disabled) {
   background: var(--surface);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
-  transition: color var(--ease), border-color var(--ease), background var(--ease);
+  transition: color var(--ease), border-color var(--ease), background-color var(--ease);
 }
 .format-chips button:hover:not(:disabled) {
   color: var(--primary);
@@ -3544,6 +3582,78 @@ button.timecode:hover:not(:disabled) {
 @keyframes pulse {
   50% {
     opacity: 0.55;
+  }
+}
+
+/*
+ * 按下反馈：0.96 是上限，再小就显得夸张。
+ * 这里统一覆盖上面各按钮自己的 transition 列表，把 scale 一起纳入过渡，
+ * 松手时才会平滑弹回，而不是瞬间跳回原尺寸。
+ */
+.primary-button,
+.secondary-button,
+.text-button,
+.file-button,
+.icon-button,
+.new-task-button,
+.model-option,
+.author-card,
+.segmented-switch button,
+.view-switch button,
+.format-chips button,
+.batch-expand,
+.filter-chip,
+.source-copy {
+  transition-property: color, background-color, border-color, box-shadow, opacity, scale;
+  transition-duration: 160ms;
+  transition-timing-function: ease;
+}
+.primary-button:active:not(:disabled),
+.secondary-button:active:not(:disabled),
+.text-button:active:not(:disabled),
+.file-button:active:not(:disabled),
+.icon-button:active:not(:disabled),
+.new-task-button:active:not(:disabled),
+.model-option:active:not(:disabled),
+.format-chips button:active:not(:disabled),
+.author-card:active,
+.segmented-switch button:active,
+.view-switch button:active,
+.batch-expand:active,
+.filter-chip:active,
+.source-copy:active {
+  scale: 0.96;
+}
+
+/*
+ * 图标随状态切换：两个图标都留在 DOM 里、叠在同一格上做交叉淡化。
+ * 用 transition 而不是切换可见性，进入和退出都有动画，也不必为一次状态变化引入动画库。
+ * 数值固定为 scale 0.25 → 1、opacity 0 → 1、blur 4px → 0。
+ */
+.icon-swap {
+  display: inline-grid;
+  place-items: center;
+}
+.icon-swap > * {
+  grid-area: 1 / 1;
+  transition-property: scale, opacity, filter;
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+.icon-swap > .is-off {
+  scale: 0.25;
+  opacity: 0;
+  filter: blur(4px);
+}
+
+/* 编辑器顶部的状态提示：出现时轻轻落下，不再硬闪一下 */
+.editor-feedback {
+  animation: feedback-in 160ms ease-out;
+}
+@keyframes feedback-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
   }
 }
 
@@ -3661,7 +3771,7 @@ button.timecode:hover:not(:disabled) {
   .source-input-wrap .primary-button {
     min-height: var(--control-lg);
   }
-  .capture-mode-switch {
+  .segmented-switch {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
@@ -3882,20 +3992,16 @@ button.timecode:hover:not(:disabled) {
   .job-card-actions .text-button {
     min-height: 44px;
   }
-  .batch-card-head,
-  .batch-card-foot {
-    align-items: flex-start;
+  .batch-card-head {
     flex-wrap: wrap;
   }
   .batch-title {
     min-width: calc(100% - 64px);
   }
-  .batch-card-head > .status-chip {
-    margin-left: 52px;
-  }
-  .batch-actions {
-    width: 100%;
+  /* 右列换到第二行时缩进到标题列、改成左对齐，和上面「批量提取（4 条）」左边缘对齐 */
+  .batch-card-side {
     justify-content: flex-start;
+    margin-left: 52px;
   }
   .batch-actions .text-button {
     min-height: 44px;
@@ -4011,6 +4117,10 @@ button.timecode:hover:not(:disabled) {
     min-height: 24px;
     margin: 0 0 6px 10px;
     color: var(--primary);
+  }
+  /* 窄屏把两个视图统一到 --text-base：来回切「全文 / 时间轴」时正文不会忽大忽小 */
+  .fulltext-paragraph {
+    font-size: var(--text-base);
   }
   .segment-row textarea {
     min-height: 52px;

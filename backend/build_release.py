@@ -169,7 +169,10 @@ def main() -> int:
     print()
     print("上传到 Releases 时保持这个文件名，工作台的「检查更新」才认得出：")
     print(f'    gh release create v{version} "{target}" --title "文案工作台 v{version}" --notes "…"')
-    print("    发版前确认三处版本号一致：backend/app/config.py、backend/pyproject.toml、frontend/package.json")
+    print(
+        "    发版前确认四处版本号一致：backend/app/config.py、backend/pyproject.toml、"
+        "frontend/package.json、frontend/package-lock.json"
+    )
     return 0
 
 

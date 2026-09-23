@@ -138,14 +138,14 @@ cd ..\backend
 **发行包**：最后一步把上面那个目录压成可以直接上传到 Releases 的 zip，放在仓库根目录的 `release\`：
 
 ```text
-release\video-transcript-workbench-v0.1.4-win64.zip          （430 MB → 171 MB，约 20 秒）
-release\video-transcript-workbench-v0.1.4-win64.zip.sha256   （校验文件）
+release\video-transcript-workbench-v<版本>-win64.zip          （430 MB → 171 MB，约 20 秒）
+release\video-transcript-workbench-v<版本>-win64.zip.sha256   （校验文件）
 ```
 
 - 文件名不是装饰：`-win64.zip` 是工作台「检查更新」的识别依据（`app/infrastructure/updater.py` 的 `select_asset` 优先挑带 `win64` 的 zip），名字错了用户在界面里就下不到新版本；版本号从 `backend/app/config.py` 读，与界面显示的版本同一个来源。
 - zip 里保留 `文案工作台/` 这一层目录，与历史发行包一致：用户解压后双击目录里的 exe 就能用，界面上说的「解压覆盖程序目录」也按这个结构理解。
 - 打包脚本也可以单独用：`backend\.venv\Scripts\python build_release.py`，支持 `--level 1`（压得更快、体积略大）、`--output <目录>`、`--print-version`（只打印版本号）。
-- 上传发布：`gh release create v0.1.4 release\video-transcript-workbench-v0.1.4-win64.zip --title "文案工作台 v0.1.4" --notes "…"`；发版前照「版本与更新」一节确认三处版本号一致。
+- 上传发布：`gh release create v<版本> release\video-transcript-workbench-v<版本>-win64.zip --title "文案工作台 v<版本>" --notes "…"`；发版前照「版本与更新」一节确认四处版本号一致。
 
 打包版**不会弹出终端窗口**，而是常驻**系统托盘**：
 
@@ -222,7 +222,7 @@ $env:VTW_FALLBACK_API_BASE = "https://你的网关地址"
 
 ## 版本与更新
 
-版本号只有一个来源：`backend/app/config.py` 的 `app_version`（后端用它做 OpenAPI 版本与 `/api/health` 的返回值，界面显示也是它）。发版时把它和 `backend/pyproject.toml`、`frontend/package.json` 的 `version` 一起改，三处保持一致即可。
+版本号只有一个来源：`backend/app/config.py` 的 `app_version`（后端用它做 OpenAPI 版本与 `/api/health` 的返回值，界面显示、发行包文件名也都是它）。发版时把它和 `backend/pyproject.toml`、`frontend/package.json`、`frontend/package-lock.json` 的 `version` 一起改，**四处**保持一致：前三处是手写的，lock 里的两处由 `npm install` 自动同步（构建脚本发现 `package.json` 比 `node_modules` 新时会跑一次 `npm install`，别把这一步产生的改动漏在提交外）。
 
 默认去 GitHub Releases 查最新版本（`https://api.github.com/repos/splexuan/video-transcript-workbench/releases/latest`），只认资产名里带 `win64` 且以 `.zip` 结尾的 Windows 免安装包 —— 也就是 `build.bat` 生成的 `video-transcript-workbench-v<版本>-win64.zip`（见「打包成 exe」）；换成镜像或自建服务时用环境变量覆盖，不用改代码：
 

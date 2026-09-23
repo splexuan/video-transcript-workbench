@@ -54,3 +54,10 @@ docs/
 
 .workbuddy/
 .tmp/
+
+# 发行包输出目录：build.bat / build_release.py 生成的 zip 落在这里
+release/
+
+
+# 发行包输出目录：build.bat / build_release.py 生成的 zip 落在这里
+release/

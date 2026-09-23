@@ -308,10 +308,10 @@ button:disabled {
   box-shadow: inset 3px 0 0 var(--primary);
 }
 
+/* 页脚分两行：上一行是「本地运行」说明，下一行是版本号与主题按钮，各归各位不抢空间 */
 .sidebar-footer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: grid;
+  gap: 12px;
   margin-top: auto;
   padding: 14px 4px 0;
   border-top: 1px solid var(--border);
@@ -338,6 +338,35 @@ button:disabled {
   font-size: var(--text-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 页脚第一行：「本地运行」说明 + 主题按钮 */
+.footer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* 有新版本时才出现的一行：整行可点，直接去设置页 */
+.update-note {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--primary);
+  background: var(--primary-soft);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.update-note:hover {
+  background: var(--surface-hover);
+}
+.update-note .status-dot {
+  width: 6px;
+  height: 6px;
 }
 .status-dot,
 .job-state {
@@ -1085,16 +1114,9 @@ button:disabled {
 .document-row:hover {
   background: var(--surface-subtle);
 }
-.document-glyph {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  color: var(--primary);
-  background: var(--primary-soft);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
+/* 工作台右栏比文案库窄，封面对应收窄，比例仍是 16:9 */
+.document-row .cover-thumb {
+  width: 48px;
 }
 .document-info {
   min-width: 0;
@@ -1707,8 +1729,9 @@ span.task-exec-cover {
 .filter-select:focus-within::after {
   background: var(--text-secondary);
 }
-/* 列表里的作品封面：16:9 缩略图，图片盖在图标占位之上，加载失败自动露出占位 */
-.library-thumb {
+/* 列表里的作品封面：16:9 缩略图，图片盖在图标占位之上，加载失败自动露出占位。
+   文案库列表与工作台「最近文案」共用同一外观。 */
+.cover-thumb {
   position: relative;
   display: grid;
   place-items: center;
@@ -1721,7 +1744,7 @@ span.task-exec-cover {
   background: linear-gradient(135deg, var(--surface-subtle), var(--surface-hover));
   overflow: hidden;
 }
-.library-thumb img {
+.cover-thumb img {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -2930,6 +2953,96 @@ select {
   color: var(--success);
   font-size: var(--text-xs);
 }
+/* 版本与更新：新版本块、下载进度与已下载的安装包 */
+.update-block {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+.update-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.update-head strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.update-head small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.update-notes {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+/* 更新说明是 markdown 原文：保留换行、长文限高滚动，别把卡片撑爆 */
+.release-notes {
+  width: 100%;
+  max-height: 260px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.update-progress {
+  display: grid;
+  gap: 8px;
+}
+.update-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+}
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.update-status {
+  margin: 16px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.update-package {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.update-package strong,
+.update-package small {
+  display: block;
+}
+.update-package strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.update-package small {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
 
 /* ---------- 编辑器 ---------- */
 
@@ -3684,10 +3797,19 @@ button.timecode:hover:not(:disabled) {
     padding: 0;
   }
   .sidebar-footer {
+    gap: 8px;
+    justify-items: center;
+  }
+  .footer-row {
     flex-direction: column;
+    gap: 8px;
   }
   .privacy-note {
     flex: 0 0 auto;
+  }
+  /* 图标栏放不下整行提示；设置页里仍然看得到 */
+  .update-note {
+    display: none;
   }
   .editor-workspace {
     grid-template-columns: minmax(420px, 1fr) 220px;
@@ -3972,7 +4094,7 @@ button.timecode:hover:not(:disabled) {
   .document-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .document-glyph,
+  .document-row .cover-thumb,
   .document-row > svg:last-child {
     display: none;
   }

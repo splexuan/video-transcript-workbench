@@ -1,4 +1,4 @@
-import { ArrowRight, CircleCheck, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react'
+import { ArrowRight, CircleCheck, Film, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react'
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -481,7 +481,18 @@ export function WorkbenchPage() {
                   key={document.id}
                   onClick={(event) => { event.preventDefault(); setDocPreviewId(document.id) }}
                 >
-                  <span className="document-glyph">稿</span>
+                  {/* 封面缩略图；没有封面或加载失败时露出底下的图标占位 */}
+                  <span className="cover-thumb">
+                    <Film size={15} />
+                    {document.has_cover && (
+                      <img
+                        src={api.coverUrl(document.id)}
+                        alt=""
+                        loading="lazy"
+                        onError={(event) => { event.currentTarget.style.display = 'none' }}
+                      />
+                    )}
+                  </span>
                   <span className="document-info">
                     <strong>{document.title}</strong>
                     <small>{timeLabel(document.updated_at)} · {document.word_count} 字</small>

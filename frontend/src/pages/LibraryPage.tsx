@@ -296,7 +296,7 @@ export function LibraryPage() {
                 </span>
                 <span className="title-cell">
                   {/* 封面缩略图；没有封面或加载失败时露出底下的图标占位 */}
-                  <span className="library-thumb">
+                  <span className="cover-thumb">
                     <Film size={15} />
                     {document.has_cover && (
                       <img

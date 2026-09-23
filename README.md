@@ -60,6 +60,7 @@
 - **兜底解析**：本机解析失败时（多为平台风控），配了第三方聚合解析接口的 Key 就自动改用它取无水印直链继续识别；没配则保持原样报错，不会多发任何请求。网关地址已内置 `https://api-new.ifphp.com`，去 <https://api-new.ifphp.com/> 注册账号拿到 Key 填进「设置」即可（详见「兜底解析接口」）。
 - **AI 总结**：编辑页与文案预览弹窗（工作台 / 文案库 / 任务队列共用）都有一键入口，把文案与总结指令带到 DeepSeek —— 正常情况下用 URL 参数**直接填进它的输入框**，文案过长（超 URL 长度上限）时改为复制到剪贴板并提示粘贴。总结在 DeepSeek 侧完成，本机不做任何 AI 处理，也不保存第三方返回结果。
 - 视频号链接：本机没有可用的解析方案，粘贴分享链接后由兜底解析接口提取（需要先在「设置」页填好它的 API Key）；未配置时会明确提示去配置，而不是当成「暂不支持」。
+- **版本与更新**：侧边栏常驻版本号，启动时自动查一次新版本（可在「设置 → 关于与更新」里关掉，连请求都不会发出去），发现新版能在界面里直接下载到本机，解压覆盖程序目录即可完成更新。工作台只下载、不替换自身（原因见「版本与更新」）。
 
 ## 开发启动
 
@@ -117,7 +118,7 @@ npm run dev
 
 ## 打包成 exe
 
-**一键构建**：双击根目录的 `build.bat`，它会依次更新代码（`git pull --ff-only`）、构建前端、检查打包依赖、关闭正在运行的旧版本、再跑 PyInstaller。只想要前端产物就用 `build.bat frontend`；从命令行或自动化脚本里调用时可先设 `VTW_NO_PAUSE=1` 跳过结束时的等待。
+**一键构建**：双击根目录的 `build.bat`，它会依次更新代码（`git pull --ff-only`）、构建前端、检查打包依赖、关闭正在运行的旧版本、跑 PyInstaller，最后把产物打成发行包。只想要前端产物就用 `build.bat frontend`；想用现有产物重新打包发行包就用 `build.bat package`（不更新代码、不重建）；从命令行或自动化脚本里调用时可先设 `VTW_NO_PAUSE=1` 跳过结束时的等待。
 
 手动分步执行：
 
@@ -127,11 +128,24 @@ npm run build
 cd ..\backend
 .\.venv\Scripts\python -m pip install -e ".[dev,accurate]"
 .\.venv\Scripts\python -m PyInstaller 文案工作台.spec --noconfirm
+.\.venv\Scripts\python build_release.py
 ```
 
 打包前请确认 `.[dev,accurate]` 装好：`accurate` 里的 faster-whisper / ctranslate2 是「精准时间轴」的引擎，缺了打包会提示「产物里不会有对应能力」（这是提示而非报错，容易漏看）。
 
 产物在 `backend\dist\文案工作台\`，双击其中的 `文案工作台.exe` 即可运行，整个目录拷给别人就能用（首次使用仍需下载识别模型）。
+
+**发行包**：最后一步把上面那个目录压成可以直接上传到 Releases 的 zip，放在仓库根目录的 `release\`：
+
+```text
+release\video-transcript-workbench-v0.1.4-win64.zip          （430 MB → 171 MB，约 20 秒）
+release\video-transcript-workbench-v0.1.4-win64.zip.sha256   （校验文件）
+```
+
+- 文件名不是装饰：`-win64.zip` 是工作台「检查更新」的识别依据（`app/infrastructure/updater.py` 的 `select_asset` 优先挑带 `win64` 的 zip），名字错了用户在界面里就下不到新版本；版本号从 `backend/app/config.py` 读，与界面显示的版本同一个来源。
+- zip 里保留 `文案工作台/` 这一层目录，与历史发行包一致：用户解压后双击目录里的 exe 就能用，界面上说的「解压覆盖程序目录」也按这个结构理解。
+- 打包脚本也可以单独用：`backend\.venv\Scripts\python build_release.py`，支持 `--level 1`（压得更快、体积略大）、`--output <目录>`、`--print-version`（只打印版本号）。
+- 上传发布：`gh release create v0.1.4 release\video-transcript-workbench-v0.1.4-win64.zip --title "文案工作台 v0.1.4" --notes "…"`；发版前照「版本与更新」一节确认三处版本号一致。
 
 打包版**不会弹出终端窗口**，而是常驻**系统托盘**：
 
@@ -205,6 +219,28 @@ $env:VTW_FALLBACK_API_BASE = "https://你的网关地址"
 - 网关已内置 `https://api-new.ifphp.com`：开箱可用，源码运行与打包版都走这个地址，不需要任何环境变量；接口方换域名时用 `VTW_FALLBACK_API_BASE` 覆盖即可（该变量为空或只有空白时，仍回落内置地址）。
 
 > 提醒：兜底网关是第三方服务，直链由对方返回、可用性不受本项目控制，使用前请自行确认合规性与稳定性；返回的直链带时效签名，只能现取现用。
+
+## 版本与更新
+
+版本号只有一个来源：`backend/app/config.py` 的 `app_version`（后端用它做 OpenAPI 版本与 `/api/health` 的返回值，界面显示也是它）。发版时把它和 `backend/pyproject.toml`、`frontend/package.json` 的 `version` 一起改，三处保持一致即可。
+
+默认去 GitHub Releases 查最新版本（`https://api.github.com/repos/splexuan/video-transcript-workbench/releases/latest`），只认资产名里带 `win64` 且以 `.zip` 结尾的 Windows 免安装包 —— 也就是 `build.bat` 生成的 `video-transcript-workbench-v<版本>-win64.zip`（见「打包成 exe」）；换成镜像或自建服务时用环境变量覆盖，不用改代码：
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `VTW_UPDATE_API_BASE` | `https://api.github.com` | 更新服务的根地址（GitHub API 或兼容服务） |
+| `VTW_UPDATE_REPO` | `splexuan/video-transcript-workbench` | 仓库全名（`owner/name`） |
+| `VTW_UPDATE_CHECK_INTERVAL_HOURS` | `12` | 自动检查的节流间隔：距上次检查不足这个时长就不再联网 |
+
+行为说明：
+
+- **自动检查**只发生在界面读取版本状态时（`GET /api/updates`），并且超过节流间隔才真的打远程。关掉「启动时自动检查更新」后，这个接口不会再发任何远程请求；「检查更新」按钮走 `POST /api/updates/check`，忽略节流。
+- 检查失败（断网、被墙、限流）不会清掉上一次的结果，只把原因显示出来；`has_update` 另外会过滤掉「跳过此版本」记下的版本号。
+- **下载不替换自身**：免安装目录里的 exe 正在运行，Windows 不允许覆盖它；自动替换要先退出进程再由外部脚本搬文件，失败时可能留下一个坏掉的程序目录。所以工作台只做「检查 → 下载 → 打开目录」，界面会给出目录与操作说明。文案、模型与平台凭据都在数据目录里，解压覆盖程序目录不会丢数据。
+- 下载包放在 `<数据目录>\updates\`（默认 `%LOCALAPPDATA%\VideoTranscriptWorkbench\updates`），下载前会校验磁盘空间，落盘后会校验「是 zip 且包含 exe」；下载过的同一个包再次点击时不会重复下载。
+- 下载进度与取消走后台线程 + 进度快照，和模型安装是同一套模式；界面在下载期间每 1.2 秒轮询一次。
+
+版本与更新接口：`GET /api/updates` 查看状态，`POST /api/updates/check` 立即检查，`POST /api/updates/download` 下载，`POST /api/updates/cancel` 取消，`DELETE /api/updates/package` 删除已下载的包，`POST /api/updates/reveal` 在资源管理器里打开下载目录。
 
 ## 已知环境约束
 

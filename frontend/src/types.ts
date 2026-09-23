@@ -189,6 +189,64 @@ export interface AppSettings {
   fallback_api_key_set: boolean
   /** 仅提交时使用：写入兜底解析的 API Key（空串表示清除）；读取设置时不会返回。 */
   fallback_api_key?: string
+  /** 启动时自动查一次新版本；关闭后连一次请求都不会发出去。 */
+  auto_check_update: boolean
+  /** 点过「跳过此版本」记下的版本号，空串表示正常提示。 */
+  ignored_version: string
+}
+
+/** Release 里的下载资产，后端只挑 Windows 免安装包（zip）。 */
+export interface UpdateAsset {
+  name: string
+  size: number
+  url: string
+}
+
+export interface UpdateRelease {
+  version: string
+  tag: string
+  name: string
+  /** Release 正文（markdown 原文），由界面决定怎么展示。 */
+  notes: string
+  published_at: string
+  page_url: string
+  asset: UpdateAsset | null
+}
+
+export interface UpdateProgress {
+  version: string
+  file_name: string
+  status: 'pending' | 'running' | 'verifying' | 'cancelling' | 'ready' | 'failed' | 'cancelled'
+  percent: number
+  downloaded_bytes: number
+  total_bytes: number
+  path: string
+  message: string
+  error: string | null
+  updated_at: number
+}
+
+/** 已经下载到本机的更新包；重启程序后依然在。 */
+export interface UpdatePackage {
+  file_name: string
+  version: string
+  size: number
+  path: string
+}
+
+export interface UpdateState {
+  current_version: string
+  /** 打包版才谈得上替换程序目录；开发模式只展示版本与提示。 */
+  packaged: boolean
+  latest: UpdateRelease | null
+  /** 已经按 ignored_version 过滤过的结论，界面直接用它决定要不要提示。 */
+  has_update: boolean
+  ignored_version: string
+  checked_at: number | null
+  error: string | null
+  auto_check: boolean
+  download: UpdateProgress | null
+  package: UpdatePackage | null
 }
 
 export type ModelState = 'ready' | 'missing' | 'partial' | 'broken' | 'installing'

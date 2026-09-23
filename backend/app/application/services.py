@@ -51,6 +51,10 @@ DEFAULT_SETTINGS = {
     "storage_path": "",
     # 兜底解析接口的 API Key：加密后存在同一张设置表里，读取时只回传「是否已配置」
     "fallback_api_key": "",
+    # 启动时自动查一次新版本（受 update_check_interval_hours 节流）
+    "auto_check_update": "true",
+    # 用户点过「跳过此版本」的版本号；只影响提示，不影响检查结果本身
+    "ignored_version": "",
 }
 
 # 兜底解析（第三方聚合接口）的 Key 设置项：只写不读，明文不出后端
@@ -902,6 +906,8 @@ def read_settings(session: Session) -> dict[str, str | bool]:
         "storage_path": merged["storage_path"],
         # Key 明文不回传，前端只知道配了没有
         "fallback_api_key_set": read_fallback_api_key(session) is not None,
+        "auto_check_update": merged["auto_check_update"] == "true",
+        "ignored_version": merged["ignored_version"],
     }
 
 

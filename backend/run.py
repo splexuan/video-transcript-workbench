@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import threading
 import time
@@ -27,6 +26,7 @@ from pathlib import Path
 import uvicorn
 
 from app.config import settings
+from app.infrastructure.desktop import open_path
 from app.main import app
 
 APP_NAME = "文案工作台"
@@ -145,11 +145,7 @@ def run_tray(server: uvicorn.Server, base_url: str) -> bool:
         webbrowser.open(base_url)
 
     def open_logs(*_args: object) -> None:
-        folder = log_file().parent
-        if sys.platform == "win32":
-            os.startfile(folder)
-        else:
-            webbrowser.open(folder.as_uri())
+        open_path(log_file().parent)
 
     def quit_app(icon: object, *_args: object) -> None:
         # 先让 uvicorn 优雅退出，再结束托盘消息循环，主线程随后返回

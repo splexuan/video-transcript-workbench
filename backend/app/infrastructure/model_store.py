@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 MARKER_FILENAME = "workbench-model.json"
 PART_SUFFIX = ".part"
 CHUNK_BYTES = 1024 * 1024
-USER_AGENT = "VideoTranscriptWorkbench/0.2 (+local)"
+USER_AGENT = f"VideoTranscriptWorkbench/{settings.app_version} (+local)"
 
 
 class _Cancelled(RuntimeError):

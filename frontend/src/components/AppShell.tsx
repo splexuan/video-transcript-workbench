@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { api } from '../lib/api'
-import type { AppSettings } from '../types'
+import type { AppSettings, UpdateState } from '../types'
 
 const navigation = [
   { to: '/', label: '工作台', icon: Plus },
@@ -61,6 +61,9 @@ export function AppShell() {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const [mode, setMode] = useState<ThemeMode>(cachedMode)
+  // 版本号来自 /api/health（最稳的一个接口），更新提示来自 /api/updates
+  const [version, setVersion] = useState('')
+  const [update, setUpdate] = useState<UpdateState | null>(null)
 
   // 移动端从长列表切换页面时回到页首，避免新页面从旧滚动位置开始。
   useEffect(() => {
@@ -105,6 +108,43 @@ export function AppShell() {
     return () => window.removeEventListener('vtw:theme', sync)
   }, [])
 
+  useEffect(() => {
+    let active = true
+    api
+      .health()
+      .then((info) => {
+        if (active) setVersion(info.version)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // 版本状态：后端按设置节流，正常打开页面不会每次都打远程。
+  useEffect(() => {
+    let active = true
+    api
+      .updates()
+      .then((state) => {
+        if (active) setUpdate(state)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // 设置页检查/下载/跳过之后同步过来，两处提示始终是同一个来源。
+  useEffect(() => {
+    const sync = (event: Event) => {
+      const detail = (event as CustomEvent<UpdateState>).detail
+      if (detail) setUpdate(detail)
+    }
+    window.addEventListener('vtw:updates', sync)
+    return () => window.removeEventListener('vtw:updates', sync)
+  }, [])
+
   const dark = resolveTheme(mode) === 'dark'
 
   function toggleTheme() {
@@ -121,7 +161,8 @@ export function AppShell() {
           <span className="brand-mark"><FileText size={19} strokeWidth={2.1} /></span>
           <span>
             <strong>文案工作台</strong>
-            <small>本地处理</small>
+            {/* 版本号跟着「本地处理」走：它是程序自己的身份信息，不占页脚位置 */}
+            <small>本地处理{version ? ` · v${version}` : ''}</small>
           </span>
         </button>
 
@@ -147,23 +188,37 @@ export function AppShell() {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="privacy-note">
-            <span className="status-dot ready" />
-            <span><strong>本地运行</strong><small>内容只存在这台电脑</small></span>
+          <div className="footer-row">
+            <div className="privacy-note">
+              <span className="status-dot ready" />
+              <span><strong>本地运行</strong><small>内容只存在这台电脑</small></span>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={toggleTheme}
+              aria-label={dark ? '切换浅色模式' : '切换深色模式'}
+              title={dark ? '浅色模式' : '深色模式'}
+            >
+              {/* 状态变化图标：两个都留在 DOM 里做交叉淡化，不硬切可见性 */}
+              <span className="icon-swap" aria-hidden="true">
+                <Sun className={dark ? undefined : 'is-off'} size={18} />
+                <Moon className={dark ? 'is-off' : undefined} size={18} />
+              </span>
+            </button>
           </div>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={toggleTheme}
-            aria-label={dark ? '切换浅色模式' : '切换深色模式'}
-            title={dark ? '浅色模式' : '深色模式'}
-          >
-            {/* 状态变化图标：两个都留在 DOM 里做交叉淡化，不硬切可见性 */}
-            <span className="icon-swap" aria-hidden="true">
-              <Sun className={dark ? undefined : 'is-off'} size={18} />
-              <Moon className={dark ? 'is-off' : undefined} size={18} />
-            </span>
-          </button>
+          {/* 只有真有新版本时才多出这一行提示，平时页脚保持两行结构 */}
+          {update?.has_update && update.latest && (
+            <button
+              className="update-note"
+              type="button"
+              onClick={() => navigate('/settings')}
+              title={`新版本 v${update.latest.version} 已发布，点击到设置页查看`}
+            >
+              <span className="status-dot ready" aria-hidden="true" />
+              新版本 v{update.latest.version}
+            </button>
+          )}
         </div>
       </aside>
       <main className="main-content" id="main-content">

@@ -15,6 +15,8 @@ import type {
   ModelCatalog,
   Page,
   RecognitionModel,
+  UpdateProgress,
+  UpdateState,
 } from '../types'
 
 /** 拼查询串；空值跳过，数组展开成重复参数（后端的 ids 用重复参数收）。 */
@@ -177,4 +179,15 @@ export const api = {
     request<RecognitionModel>(`/api/models/${id}/verify`, { method: 'POST' }),
   deleteModel: (id: string) =>
     request<{ removed: boolean; model_id: string }>(`/api/models/${id}`, { method: 'DELETE' }),
+  /** 版本状态；后端按设置节流，正常打开页面不会每次都打远程。 */
+  updates: () => request<UpdateState>('/api/updates'),
+  /** 界面上的「检查更新」：忽略节流立即查一次。 */
+  checkUpdates: () => request<UpdateState>('/api/updates/check', { method: 'POST' }),
+  downloadUpdate: () => request<UpdateProgress>('/api/updates/download', { method: 'POST' }),
+  cancelUpdateDownload: () => request<UpdateProgress>('/api/updates/cancel', { method: 'POST' }),
+  deleteUpdatePackage: () =>
+    request<{ removed: boolean }>('/api/updates/package', { method: 'DELETE' }),
+  /** 在资源管理器里打开更新包所在目录。 */
+  revealUpdatePackage: () =>
+    request<{ path: string; opened: boolean }>('/api/updates/reveal', { method: 'POST' }),
 }

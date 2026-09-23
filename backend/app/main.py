@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.credentials import router as credentials_router
 from app.api.models import router as models_router
 from app.api.router import router
+from app.api.updates import router as updates_router
 from app.application.worker import local_worker
 from app.config import settings
 from app.infrastructure.database import init_database
@@ -43,6 +44,7 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(models_router)
 app.include_router(credentials_router)
+app.include_router(updates_router)
 
 def _find_frontend_dist() -> Path | None:
     """前端静态资源：打包版在资源目录里，开发版在仓库的 frontend/dist。"""

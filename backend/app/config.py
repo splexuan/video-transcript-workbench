@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     models_dir: Path | None = None
     download_retries: int = 3
     download_timeout_seconds: float = 60.0
+    # 版本更新：默认查 GitHub Releases。要换成镜像或自建服务时，用
+    # VTW_UPDATE_API_BASE / VTW_UPDATE_REPO 覆盖，不用改代码。
+    update_api_base: str = "https://api.github.com"
+    update_repo: str = "splexuan/video-transcript-workbench"
+    # 自动检查的节流间隔（小时）：每打开一次页面都会问一次版本，靠它避免反复打远程。
+    update_check_interval_hours: float = 12.0
     # 精准识别（faster-whisper）运行参数：只在 CPU 上推理，不依赖 CUDA / cuDNN。
     # 留空用 int8（实测最快的 CPU 精度），可显式指定 ctranslate2 支持的其它精度。
     whisper_compute_type: str = ""
@@ -56,6 +62,12 @@ class Settings(BaseSettings):
     @property
     def models_root(self) -> Path:
         return self.models_dir or (self.data_dir / "models")
+
+    @property
+    def updates_dir(self) -> Path:
+        """下载好的新版本压缩包放这里；替换程序目录由用户手动完成。"""
+
+        return self.data_dir / "updates"
 
 
 settings = Settings()

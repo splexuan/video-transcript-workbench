@@ -14,6 +14,7 @@ import type {
   LoginStatus,
   ModelCatalog,
   Page,
+  PolishedText,
   RecognitionModel,
   UpdateProgress,
   UpdateState,
@@ -115,7 +116,7 @@ export const api = {
   documentTitles: (ids: string[]) =>
     request<DocumentTitle[]>(`/api/documents/titles${queryString({ ids })}`),
   document: (id: string) => request<DocumentDetail>(`/api/documents/${id}`),
-  saveDocument: (id: string, payload: Partial<Pick<DocumentSummary, 'title' | 'status'>>) =>
+  saveDocument: (id: string, payload: Partial<Pick<DocumentSummary, 'title'>>) =>
     request<DocumentSummary>(`/api/documents/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
@@ -135,14 +136,18 @@ export const api = {
     }),
   deleteDocument: (id: string) =>
     request<{ id: string; removed: boolean }>(`/api/documents/${id}`, { method: 'DELETE' }),
-  /** 智能分句：把手写/识别文本重排成句级分段，便于逐句校对。 */
-  autoFormat: (id: string) =>
-    request<DocumentDetail>(`/api/documents/${id}/auto-format`, { method: 'POST' }),
-  exportText: async (id: string) => {
-    const response = await fetch(api.exportUrl(id, 'txt'))
-    if (!response.ok) throw new Error(`读取全文失败（${response.status}）`)
-    return response.text()
-  },
+  /** 智能分句：把文案整理成带标点的自然段；结果只回给编辑框，用户确认后再保存。 */
+  polish: (id: string) =>
+    request<PolishedText>(`/api/documents/${id}/polish`, { method: 'POST' }),
+  /** 保存整理结果：按自然段重建分段（一段一条，时间按字数比例分摊）。 */
+  applyPolishedText: (id: string, text: string) =>
+    request<DocumentDetail>(`/api/documents/${id}/polish/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+  /** 恢复原始字幕行：用识别原文重建「一行一句」的分段。 */
+  restoreLines: (id: string) =>
+    request<DocumentDetail>(`/api/documents/${id}/restore-lines`, { method: 'POST' }),
   exportUrl: (id: string, format: 'txt' | 'srt' | 'vtt' | 'json') =>
     `/api/documents/${id}/export?format=${format}`,
   /** 原始音轨的播放地址；未保留时该地址返回 404。 */

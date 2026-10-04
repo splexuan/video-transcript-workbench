@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from app.application.text_formatting import (
     group_paragraphs,
-    lines_as_text,
-    paragraphs_as_text,
     reflow_segments,
     split_sentences,
+    transcript_as_text,
+    transcript_blocks,
 )
 from app.domain import JobStage, JobStatus
 from app.infrastructure.database import SessionLocal, init_database
@@ -37,21 +37,19 @@ def test_split_sentences_fallback_for_unpunctuated_blob() -> None:
     assert all(len(item) >= 30 for item in sentences)
 
 
-def test_lines_as_text_keeps_one_segment_per_line() -> None:
-    """字幕来源按原样一行一句：不补标点、不合并段落。
-
-    实测 B站 AI 字幕整段没有标点、时间戳首尾相连（间隔恒为 0），条目边界也和
-    语义无关，所以规则补标点只会产生「随机位置的逗号」，不如原样展示。
-    """
+def test_transcript_as_text_keeps_subtitles_line_by_line() -> None:
+    """字幕原样一行一句（条目的边界就是字幕边界），识别结果按停顿成段。"""
 
     segments = [
         (0, 1_000, "其实面对折叠手机"),
-        (1_000, 2_000, "我们始终会有个绕不过的问题"),
+        (8_000, 9_000, "我们始终会有个绕不过的问题"),
     ]
 
-    assert lines_as_text(segments) == "其实面对折叠手机\n我们始终会有个绕不过的问题"
-    # 空片段不占行
-    assert lines_as_text([(0, 1_000, "   "), (1_000, 2_000, "有内容")]) == "有内容"
+    assert transcript_as_text(segments) == "其实面对折叠手机\n\n我们始终会有个绕不过的问题"
+    assert transcript_as_text(segments, subtitle=True) == "其实面对折叠手机\n我们始终会有个绕不过的问题"
+    assert transcript_blocks(segments, subtitle=True) == ["其实面对折叠手机", "我们始终会有个绕不过的问题"]
+    # 空片段不占位置
+    assert transcript_as_text([(0, 1_000, "   "), (1_000, 2_000, "有内容")], subtitle=True) == "有内容"
 
 
 def test_reflow_segments_distributes_time_by_length() -> None:
@@ -91,9 +89,9 @@ def test_group_paragraphs_sentence_cap() -> None:
     assert sum(len(block) for block in paragraphs) == 10
 
 
-def test_paragraphs_as_text_joins_within_paragraph() -> None:
+def test_transcript_as_text_joins_within_paragraph() -> None:
     segments = [(0, 1_000, "大家好。"), (1_000, 2_000, "今天聊导出。"), (5_000, 6_000, "第二段开始。")]
-    text = paragraphs_as_text(segments)
+    text = transcript_as_text(segments)
     assert text == "大家好。今天聊导出。\n\n第二段开始。"
 
 

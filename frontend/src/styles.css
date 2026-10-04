@@ -1661,17 +1661,6 @@ span.task-exec-cover {
   min-width: 0;
   color: var(--text);
 }
-/* 校对状态徽标：只在「已校对」时出现，草稿状态不打扰 */
-.reviewed-badge {
-  flex: 0 0 auto;
-  padding: 2px 7px;
-  border-radius: var(--radius-pill);
-  color: var(--success);
-  background: var(--success-soft);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-}
 /* 文案来源标注：单条 / 批量。批量用主色，单条弱化——整页每行都挂标签才不显得吵 */
 .origin-cell {
   display: flex;
@@ -3426,19 +3415,18 @@ select {
   border-color: var(--border);
   background: var(--surface-subtle);
 }
-/* 字幕来源的一行一句：条目之间只是普通行距，不需要自然段的缩进与大间隔 */
-.fulltext-paragraph.fulltext-line {
-  margin: 0;
-  padding: 3px 10px;
-  text-indent: 0;
-  font-size: var(--text-base);
-  line-height: var(--leading-normal);
-}
 .fulltext-paragraph:focus {
   outline: 0;
   border-color: var(--primary);
   background: var(--surface);
   box-shadow: var(--focus-ring);
+}
+/* 字幕来源的整篇编辑：一个框装下全文，段落之间空行。
+   高度固定、框内滚动：长文（几千行字幕）不会把页面撑到几万像素，也不用每次按键重排布局 */
+.fulltext-paragraph.fulltext-whole {
+  height: 62vh;
+  overflow-y: auto;
+  text-indent: 0;
 }
 .fulltext-note {
   margin: 30px 0 0;
@@ -3447,6 +3435,16 @@ select {
   color: var(--text-muted);
   font-size: var(--text-xs);
   line-height: var(--leading-snug);
+}
+/* 全文视图下的小操作区：次级动作与说明并排，不抢正文的注意力 */
+.fulltext-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 /* 时间轴视图：左侧时间码、中间编号节点、右侧文本，一条竖向轴线串起全部分段。 */
 .segment-list {

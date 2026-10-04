@@ -57,6 +57,26 @@ def _sense_voice_files() -> tuple[ModelFile, ...]:
     )
 
 
+PUNCT_REPO = "csukuangfj/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12"
+PUNCT_FALLBACK_REPO = "pengzhendong/punct-ct-transformer-zh-en"
+# 词表内嵌在 onnx 元数据里，目录中只需要 model.onnx 一个文件。
+PUNCT_MODEL_BYTES = 294_372_519
+
+
+def _punctuation_files() -> tuple[ModelFile, ...]:
+    return (
+        ModelFile(
+            name="model.onnx",
+            urls=(
+                f"{MODEL_SCOPE}/{PUNCT_REPO}/resolve/master/model.onnx",
+                f"{MODEL_SCOPE}/{PUNCT_FALLBACK_REPO}/resolve/master/model.onnx",
+                f"{HF_MIRROR}/{PUNCT_REPO}/resolve/main/model.onnx",
+            ),
+            size=PUNCT_MODEL_BYTES,
+        ),
+    )
+
+
 WHISPER_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
 
 # 只保留两档：small 覆盖日常，medium 留给愿意等更久换准确度的人。
@@ -110,6 +130,18 @@ def _build_catalog() -> dict[str, ModelSpec]:
             note="输出句段级时间轴，可直接用于 SRT 字幕校对。",
             requires_package="faster-whisper",
         )
+    catalog["punct-ct-transformer-zh-en"] = ModelSpec(
+        id="punct-ct-transformer-zh-en",
+        name="中文标点恢复（智能分句）",
+        engine=ModelEngine.PUNCTUATION,
+        tier=ModelTier.UTILITY,
+        description="CT-Transformer 中文标点模型，给没有标点的平台字幕补标点，智能分句据此整理出自然段。",
+        files=_punctuation_files(),
+        languages="中文 / 英文",
+        recommended=True,
+        note="只在点「智能分句」时用到，不参与语音识别；不安装则字幕文案无法自动整理标点。",
+        requires_package="sherpa-onnx",
+    )
     return catalog
 
 
@@ -118,18 +150,21 @@ CATALOG: dict[str, ModelSpec] = _build_catalog()
 ENGINE_LABELS: dict[str, str] = {
     ModelEngine.SENSEVOICE.value: "SenseVoice",
     ModelEngine.FASTER_WHISPER.value: "faster-whisper",
+    ModelEngine.PUNCTUATION.value: "标点恢复",
 }
 
 # 引擎对应的 Python 导入模块名（用于检测运行时依赖是否已安装）。
 ENGINE_PACKAGES: dict[str, str] = {
     ModelEngine.SENSEVOICE.value: "sherpa_onnx",
     ModelEngine.FASTER_WHISPER.value: "faster_whisper",
+    ModelEngine.PUNCTUATION.value: "sherpa_onnx",
 }
 
 # 面向用户的依赖名称，用在错误提示里。
 ENGINE_PACKAGE_LABELS: dict[str, str] = {
     ModelEngine.SENSEVOICE.value: "sherpa-onnx",
     ModelEngine.FASTER_WHISPER.value: "faster-whisper",
+    ModelEngine.PUNCTUATION.value: "sherpa-onnx",
 }
 
 

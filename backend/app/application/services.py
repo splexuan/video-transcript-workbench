@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -12,9 +13,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.application.exporters import documents_as_zip
 from app.application.pagination import encode_cursor, fetch_page
 from app.application.platforms import detect_platform, extract_source_url
+from app.application.polishing import PolishedTranscript, polish_lines
 from app.application.text_formatting import reflow_segments
 from app.config import settings
-from app.domain import JobStage, JobStatus, ModelEngine
+from app.domain import EngineUnavailableError, JobStage, JobStatus, ModelEngine
+from app.infrastructure import punctuation
 from app.infrastructure.cover_store import delete_cover
 from app.infrastructure.credential_store import CredentialError, protect_secret, reveal_secret
 from app.infrastructure.model_catalog import get_spec
@@ -677,8 +680,7 @@ def export_documents_bundle(
         raise DocumentExportError(
             f"一次最多导出 {MAX_EXPORT_DOCUMENTS} 篇，请按作者或平台分几次导出"
         )
-    # 字幕来源的文案要按「一行一句」导出：一次把涉及的文档全查出来，
-    # 不要每篇再查一次任务
+    # 哪些文档是字幕来源（关系正文的段落规则）：一次全查出来，不要每篇再查一次任务
     subtitle_ids = set(
         session.scalars(
             select(Job.document_id).where(
@@ -850,6 +852,8 @@ def replace_segments(
         for item in items
     )
     document.word_count = sum(len(item.text.strip()) for item in items)
+    # 按分段逐条保存，正文就回到「一条一行」的形态（段落形态由 apply_paragraph_text 维护）
+    document.paragraph_body = False
     session.commit()
     return get_document(session, document.id) or document
 
@@ -887,6 +891,143 @@ def auto_format_segments(session: Session, document: Document) -> Document:
         for index, chunk in enumerate(chunks)
     )
     document.word_count = sum(len(chunk.text.strip()) for chunk in chunks)
+    session.commit()
+    return get_document(session, document.id) or document
+
+
+def is_subtitle_document(session: Session, document_id: str) -> bool:
+    """这条文案的正文是否来自平台字幕——决定正文用一行一句还是自然段。"""
+
+    return bool(
+        session.scalar(
+            select(Job.id)
+            .where(Job.document_id == document_id, Job.transcript_source == "subtitle")
+            .limit(1)
+        )
+    )
+
+
+def polish_document(session: Session, document: Document) -> PolishedTranscript:
+    """智能分句：把文案整理成带标点的自然段。
+
+    只返回整理结果（给编辑框过目），不碰数据库里的分段——用户确认后再保存。
+    字幕文案没有标点，必须装了标点模型才能整理；识别结果自带标点，直接重新切句成段。
+    """
+
+    subtitle = is_subtitle_document(session, document.id)
+    ordered = sorted(document.segments, key=lambda item: item.position)
+    lines = [segment.text for segment in ordered]
+
+    punctuate = None
+    if subtitle:
+        if not punctuation.is_ready():
+            raise EngineUnavailableError(
+                "智能分句需要先安装「中文标点恢复」模型（设置 → 模型管理）"
+            )
+        punctuate = punctuation.add_punctuation
+
+    return polish_lines(lines, subtitle=subtitle, punctuate=punctuate)
+
+
+def apply_paragraph_text(session: Session, document: Document, text: str) -> Document:
+    """把整理好的正文按自然段写成段落级分段。
+
+    一段 = 一个分段：这样「自然段」才真正存了下来——正文（编辑框、预览、复制、
+    导出）与时间轴从此都是段落形态，重新打开不会又变回一行一句。
+    """
+
+    blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
+    if not blocks:
+        raise ValueError("正文是空的，没有可保存的内容")
+
+    updated = _rebuild_segments(session, document, blocks)
+    # 分段现在就是自然段，正文按「段落之间空行」排版
+    updated.paragraph_body = True
+    session.commit()
+    return updated
+
+
+def restore_line_segments(session: Session, document: Document) -> Document:
+    """从识别原文恢复「一行一句」的分段，撤销智能分句的结构改动。
+
+    智能分句会把分段重建成自然段，原始字幕行只留在 raw_text 里（按时间重叠归并，
+    可能重复收录同一行）。这里按原顺序收集、保序去重后逐行重建：正文回到字幕原样，
+    一行一句；时间码按字数比例分摊到原来的时间范围——原始逐行时间已被覆盖，只能近似。
+    """
+
+    ordered = sorted(document.segments, key=lambda item: item.position)
+    lines: list[str] = []
+    seen: set[str] = set()
+    for segment in ordered:
+        for raw in (segment.raw_text or "").split("\n"):
+            text = raw.strip()
+            if text and text not in seen:
+                seen.add(text)
+                lines.append(text)
+    if not lines:
+        raise ValueError("这条文案没有留下识别原文，无法恢复逐行分段")
+
+    updated = _rebuild_segments(session, document, lines)
+    updated.paragraph_body = False
+    session.commit()
+    return updated
+
+
+def _rebuild_segments(
+    session: Session,
+    document: Document,
+    blocks: list[str],
+) -> Document:
+    """把正文块一条一块写成分段：时间按字数比例分摊，识别原文按重叠保留。"""
+
+    ordered = sorted(document.segments, key=lambda item: item.position)
+    raw_sources = [(item.start_ms, item.end_ms, item.raw_text) for item in ordered]
+    all_raw = "\n".join(dict.fromkeys(raw for _, _, raw in raw_sources if raw))
+
+    starts = [item.start_ms for item in ordered if item.start_ms is not None]
+    ends = [item.end_ms for item in ordered if item.end_ms is not None]
+    span_start = min(starts) if starts else None
+    span_end = max(ends) if ends else None
+
+    def raw_text_for(start_ms: int | None, end_ms: int | None, fallback: str) -> str:
+        overlaps: list[str] = []
+        for source_start, source_end, raw_text in raw_sources:
+            if not raw_text:
+                continue
+            if None in (start_ms, end_ms, source_start, source_end):
+                continue
+            if source_start < end_ms and source_end > start_ms and raw_text not in overlaps:
+                overlaps.append(raw_text)
+        return "\n".join(overlaps) or all_raw or fallback
+
+    timeline: list[tuple[int | None, int | None]] = []
+    if span_start is None or span_end is None or span_end <= span_start:
+        timeline = [(None, None)] * len(blocks)
+    else:
+        span = span_end - span_start
+        weights = [max(len(block), 1) for block in blocks]
+        total_weight = sum(weights)
+        cursor = span_start
+        for index, weight in enumerate(weights):
+            if index == len(blocks) - 1:
+                block_end = span_end
+            else:
+                block_end = cursor + int(span * weight / total_weight)
+            timeline.append((cursor, block_end))
+            cursor = block_end
+
+    document.segments.clear()
+    document.segments.extend(
+        TranscriptSegment(
+            position=index,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            raw_text=raw_text_for(start_ms, end_ms, block),
+            text=block,
+        )
+        for index, (block, (start_ms, end_ms)) in enumerate(zip(blocks, timeline, strict=True))
+    )
+    document.word_count = sum(len(block) for block in blocks)
     session.commit()
     return get_document(session, document.id) or document
 

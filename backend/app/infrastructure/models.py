@@ -35,6 +35,9 @@ class Document(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_file: Mapped[str | None] = mapped_column(String(120), nullable=True)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
+    # 正文形态：False = 字幕原样一行一句；True = 「智能分句」整理过的自然段（段落之间空行）。
+    # 只决定正文（编辑框、预览、复制、txt/json 导出）怎么排版，分段与时间码是另一回事。
+    paragraph_body: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
 

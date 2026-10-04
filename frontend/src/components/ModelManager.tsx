@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
+  Wand2,
   X,
   Zap,
 } from 'lucide-react'
@@ -40,11 +41,13 @@ function displayModelName(model: RecognitionModel) {
 const engineLabels: Record<string, string> = {
   sensevoice: '极速文本引擎',
   faster_whisper: '精准时间轴引擎',
+  punctuation: '标点整理引擎',
 }
 
 const engineIcons: Record<string, typeof Zap> = {
   sensevoice: Zap,
   faster_whisper: Sparkles,
+  punctuation: Wand2,
 }
 
 export function ModelManager() {

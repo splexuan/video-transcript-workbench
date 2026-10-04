@@ -85,7 +85,8 @@ export interface DocumentSummary {
   source_value: string
   /** 单条提取还是批量提取来的；文案库用它标注来源。 */
   source_kind: 'single' | 'batch'
-  status: 'processing' | 'draft' | 'reviewed' | 'exported'
+  /** processing = 提取中，draft = 提取完成；历史数据里可能残留已废弃的 reviewed / exported。 */
+  status: 'processing' | 'draft'
   duration_seconds: number | null
   word_count: number
   /** 来源作品作者；本地文件没有。 */
@@ -131,10 +132,30 @@ export interface DocumentDetail extends DocumentSummary {
   segments: TranscriptSegment[]
   /** 来源作品介绍，通常比标题长；没有就是 null。 */
   description: string | null
-  /** 文案来源：subtitle（平台字幕）或 asr（本地识别）；字幕不做段落合并。 */
+  /**
+   * 文案来源：subtitle（平台字幕）或 asr（本地识别）。
+   * 字幕没有标点，全文视图整篇放在一个框里编辑，写回时按各行原始字数摊回字幕行。
+   */
   transcript_source: 'subtitle' | 'asr' | null
+  /**
+   * 正文形态：false = 字幕原样一行一句，true = 智能分句整理过的自然段（段落之间空行）。
+   * 由保存正文的两个接口各自维护，前端据此决定正文怎么排版。
+   */
+  paragraph_body: boolean
   /** 原始音轨是否还留在本机；false 时编辑页不渲染播放器。 */
   media_available: boolean
+}
+
+/** 智能分句的整理结果：只给编辑框过目，不落库。 */
+export interface PolishedText {
+  text: string
+  /** 整理后的自然段数量与句子数量，用于界面上的说明文字。 */
+  paragraphs: number
+  sentences: number
+  /** 合并掉的滚动重复条目数；0 表示没有发现重复。 */
+  merged: number
+  /** 是否调用了标点模型；识别结果自带标点时为 false。 */
+  punctuated: boolean
 }
 
 /**
@@ -269,8 +290,9 @@ export interface InstallProgress {
 export interface RecognitionModel {
   id: string
   name: string
-  engine: 'sensevoice' | 'faster_whisper'
-  tier: 'fast' | 'accurate'
+  /** punctuation 是辅助模型（标点恢复），不参与语音识别，只服务「智能分句」。 */
+  engine: 'sensevoice' | 'faster_whisper' | 'punctuation'
+  tier: 'fast' | 'accurate' | 'utility'
   description: string
   languages: string
   recommended: boolean
@@ -287,7 +309,7 @@ export interface RecognitionModel {
 }
 
 export interface EngineStatus {
-  engine: 'sensevoice' | 'faster_whisper'
+  engine: 'sensevoice' | 'faster_whisper' | 'punctuation'
   package_ready: boolean
   model_ready: boolean
   ready: boolean

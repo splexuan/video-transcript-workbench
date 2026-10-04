@@ -27,6 +27,7 @@ from app.application.services import (
     JobBatchIdempotencyConflict,
     JobBatchValidationError,
     JobRetryError,
+    apply_paragraph_text,
     auto_format_segments,
     cancel_job_batch,
     create_job,
@@ -37,15 +38,18 @@ from app.application.services import (
     find_document_media,
     get_document,
     get_job_batch,
+    is_subtitle_document,
     list_document_authors,
     list_document_titles,
     list_documents,
     list_job_batches,
     list_jobs,
     pause_job_batch,
+    polish_document,
     preflight_job_batch,
     read_settings,
     replace_segments,
+    restore_line_segments,
     resume_job_batch,
     retry_failed_job_batch,
     retry_job,
@@ -53,7 +57,7 @@ from app.application.services import (
     update_settings,
 )
 from app.config import settings
-from app.domain import ModelNotFoundError
+from app.domain import EngineUnavailableError, ModelNotFoundError
 from app.infrastructure.cover_store import cover_path
 from app.infrastructure.credential_store import all_status
 from app.infrastructure.database import get_session
@@ -74,6 +78,8 @@ from app.schemas import (
     JobCreate,
     JobRead,
     Page,
+    PolishApplyWrite,
+    PolishRead,
     SegmentsReplace,
     SettingPatch,
 )
@@ -497,7 +503,7 @@ def save_segments(
 
 @router.post("/documents/{document_id}/auto-format", response_model=DocumentDetail)
 def auto_format(document_id: str, session: SessionDep) -> DocumentDetail:
-    """智能分句：把段落/长句文本重排为句级分段，便于逐句校对。"""
+    """把段落/长句文本重排为句级分段，便于逐句校对。"""
 
     document = get_document(session, document_id)
     if not document:
@@ -505,6 +511,67 @@ def auto_format(document_id: str, session: SessionDep) -> DocumentDetail:
     if not document.segments:
         raise HTTPException(status_code=400, detail="文案还没有可整理的内容")
     return _document_detail(session, auto_format_segments(session, document))
+
+
+@router.post("/documents/{document_id}/polish", response_model=PolishRead)
+def polish(document_id: str, session: SessionDep) -> PolishRead:
+    """智能分句：把文案整理成带标点的自然段。
+
+    结果只回给前端填进编辑框，不落库——用户过目、改完再保存。
+    字幕文案需要先装好标点模型，未安装时给一条可读的提示。
+    """
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    if not document.segments:
+        raise HTTPException(status_code=400, detail="文案还没有可整理的内容")
+    try:
+        result = polish_document(session, document)
+    except EngineUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PolishRead(
+        text=result.text,
+        paragraphs=len([block for block in result.text.split("\n\n") if block.strip()]),
+        sentences=result.sentences,
+        merged=result.merged,
+        punctuated=result.punctuated,
+    )
+
+
+@router.post("/documents/{document_id}/polish/apply", response_model=DocumentDetail)
+def apply_polish(
+    document_id: str,
+    payload: PolishApplyWrite,
+    session: SessionDep,
+) -> DocumentDetail:
+    """把整理好的正文写成分段：一段一条，段落时间按字数比例分摊。
+
+    这样自然段才真正存下来——正文与时间轴都是段落形态，重新打开不会又变回一行一句。
+    """
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    try:
+        updated = apply_paragraph_text(session, document, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _document_detail(session, updated)
+
+
+@router.post("/documents/{document_id}/restore-lines", response_model=DocumentDetail)
+def restore_lines(document_id: str, session: SessionDep) -> DocumentDetail:
+    """恢复原始字幕行：从识别原文重建「一行一句」的分段（撤销智能分句的结构改动）。"""
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    try:
+        updated = restore_line_segments(session, document)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _document_detail(session, updated)
 
 
 @router.get("/documents/{document_id}/media")
@@ -545,14 +612,14 @@ def download_export(
     document = get_document(session, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="文案不存在")
-    # 字幕来源没有标点、条目边界也和语义无关，导出时保持一行一句而不是拼成段落
-    job = session.scalar(select(Job).where(Job.document_id == document_id))
-    line_by_line = bool(job and job.transcript_source == "subtitle")
+    # 与编辑页、预览同一份正文规则（字幕一行一句；整理过的字幕段落之间空行）
+    subtitle = is_subtitle_document(session, document_id)
     try:
         content, media_type, extension = export_document(
             document,
             file_format,
-            line_by_line=line_by_line,
+            subtitle=subtitle,
+            paragraphs=document.paragraph_body,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

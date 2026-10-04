@@ -14,7 +14,7 @@ from app.domain import (
     ModelState,
     ModelStatus,
 )
-from app.infrastructure import transcriber, whisper_engine
+from app.infrastructure import punctuation, transcriber, whisper_engine
 from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.model_store import (
     engine_status,
@@ -101,6 +101,7 @@ def verify_model(model_id: str) -> ModelStatus:
         # 校验后发现不可用，清掉可能已加载进内存的旧模型。
         transcriber.reset_cache()
         whisper_engine.reset_cache()
+        punctuation.reset_cache()
     return status
 
 
@@ -135,4 +136,5 @@ def delete_model(model_id: str) -> dict[str, bool | str]:
     removed = remove(spec)
     transcriber.reset_cache()
     whisper_engine.reset_cache()
+    punctuation.reset_cache()
     return {"removed": removed, "model_id": model_id}

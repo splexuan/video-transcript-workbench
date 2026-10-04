@@ -6,12 +6,7 @@ import re
 import zipfile
 from collections.abc import Sequence
 
-from app.application.text_formatting import (
-    group_paragraphs,
-    join_paragraph,
-    lines_as_text,
-    paragraphs_as_text,
-)
+from app.application.text_formatting import transcript_as_text, transcript_blocks
 from app.infrastructure.models import Document
 
 
@@ -32,24 +27,24 @@ def export_document(
     document: Document,
     file_format: str,
     *,
-    line_by_line: bool = False,
+    subtitle: bool = False,
+    paragraphs: bool = False,
 ) -> tuple[str, str, str]:
     """导出文档。
 
-    line_by_line 用于平台字幕来源：字幕没有标点、条目边界也和语义无关，
-    合并成段落只会更难读，保持「一行一句」更接近字幕原样。
+    subtitle / paragraphs 描述正文形态（documents.paragraph_body），与编辑页、预览
+    同一份规则（见 transcript_as_text）：字幕未整理时一行一句，整理过的字幕按自然段。
+    srt / vtt 是字幕文件格式，始终按分段逐条输出。
     """
 
     segments = sorted(document.segments, key=lambda item: item.position)
     safe_format = file_format.lower()
 
     if safe_format == "txt":
-        blocks = _segment_tuples(document)
-        if line_by_line:
-            content = lines_as_text(blocks)
-        else:
-            # 识别结果自带标点，组织成可读段落（段内成句，段落之间空行）
-            content = paragraphs_as_text(blocks)
+        # 与编辑页看到的一致：段内直接相接、段落之间空行，不额外补标点
+        content = transcript_as_text(
+            _segment_tuples(document), subtitle=subtitle, paragraphs=paragraphs
+        )
         return content, "text/plain; charset=utf-8", "txt"
 
     if safe_format == "srt":
@@ -75,14 +70,8 @@ def export_document(
             "platform": document.platform,
             "source": document.source_value,
             "duration_seconds": document.duration_seconds,
-            "paragraphs": (
-                [text.strip() for _, _, text in _segment_tuples(document) if text.strip()]
-                if line_by_line
-                else [
-                    join_paragraph(block)
-                    for block in group_paragraphs(_segment_tuples(document))
-                ]
-            ),
+            # 与 txt 导出、编辑页同一份正文
+            "paragraphs": transcript_blocks(_segment_tuples(document), subtitle=subtitle),
             "segments": [
                 {
                     "position": segment.position,
@@ -116,7 +105,10 @@ def documents_as_zip(
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
         for document in documents:
             content, _, extension = export_document(
-                document, file_format, line_by_line=document.id in subtitle_ids
+                document,
+                file_format,
+                subtitle=document.id in subtitle_ids,
+                paragraphs=document.paragraph_body,
             )
             data = (
                 content.encode("utf-8-sig")

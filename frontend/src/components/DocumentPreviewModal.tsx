@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { PlatformBadge } from './PlatformBadge'
 import { api } from '../lib/api'
 import { describeSummaryOutcome, openDeepSeekSummary, type SummaryOutcome } from '../lib/deepseek'
-import { segmentsToPlainText } from '../lib/textFormatting'
+import { transcriptAsText, transcriptBlocks } from '../lib/textFormatting'
 import { useModalDismiss } from '../lib/useModalDismiss'
 import type { DocumentDetail } from '../types'
 
@@ -69,10 +69,21 @@ export function DocumentPreviewModal({
   // Esc 关闭 + 弹窗期间锁住背景滚动，两条都由 useModalDismiss 统一处理
   useModalDismiss(true, requestClose)
 
+  /** 预览里的正文：与编辑页、导出共用同一套拼装（字幕一行一句或自然段，识别看停顿）。 */
+  function plainText(): string {
+    return detail
+      ? transcriptAsText(
+        detail.segments,
+        detail.transcript_source === 'subtitle',
+        detail.paragraph_body,
+      )
+      : ''
+  }
+
   async function copy() {
     if (!detail) return
     try {
-      await navigator.clipboard.writeText(detail.segments.map((segment) => segment.text).join('\n'))
+      await navigator.clipboard.writeText(plainText())
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
@@ -84,7 +95,7 @@ export function DocumentPreviewModal({
   async function summarize() {
     if (!detail) return
     setError('')
-    const outcome = await openDeepSeekSummary(detail.title, segmentsToPlainText(detail.segments))
+    const outcome = await openDeepSeekSummary(detail.title, plainText())
     const { message, isError } = describeSummaryOutcome(outcome)
     if (isError) {
       setSummaryNote('')
@@ -149,7 +160,9 @@ export function DocumentPreviewModal({
               {detail.segments.length === 0 ? (
                 <p className="compact-empty">这条文案还没有内容。</p>
               ) : (
-                detail.segments.map((segment) => <p key={segment.id}>{segment.text}</p>)
+                transcriptBlocks(detail.segments, detail.transcript_source === 'subtitle').map(
+                  (block, index) => <p key={index}>{block}</p>,
+                )
               )}
             </div>
             <footer className="modal-foot">

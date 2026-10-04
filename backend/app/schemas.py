@@ -142,6 +142,9 @@ class DocumentRead(BaseModel):
     status: str
     duration_seconds: float | None
     word_count: int
+    # 正文形态：False = 字幕原样一行一句，True = 智能分句整理过的自然段（段落之间空行）。
+    # 由保存正文的两个入口各自维护，前端据此决定正文怎么排版。
+    paragraph_body: bool = False
     # 来源作品的元信息：作者与封面（封面由 /api/documents/{id}/cover 提供）
     uploader: str | None = None
     has_cover: bool = False
@@ -189,12 +192,32 @@ class DocumentDetail(DocumentRead):
 
 
 class DocumentUpdate(BaseModel):
+    """可改的文案属性：目前只有标题。"""
+
     title: str | None = Field(default=None, min_length=1, max_length=300)
-    status: Literal["processing", "draft", "reviewed", "exported"] | None = None
 
 
 class SegmentsReplace(BaseModel):
     segments: list[SegmentWrite]
+
+
+class PolishRead(BaseModel):
+    """智能分句的整理结果：只给编辑框过目，不落库。"""
+
+    text: str
+    # 整理后的自然段数量与句子数量，用于界面上的说明文字
+    paragraphs: int
+    sentences: int
+    # 合并掉的滚动重复条目数（0 表示没有发现重复）
+    merged: int
+    # 是否调用了标点模型（识别结果自带标点时为 false）
+    punctuated: bool
+
+
+class PolishApplyWrite(BaseModel):
+    """把整理好的正文（自然段）写成分段：一段一条。"""
+
+    text: str = Field(min_length=1, max_length=2_000_000)
 
 
 class SettingPatch(BaseModel):

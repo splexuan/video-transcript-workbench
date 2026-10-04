@@ -1,58 +1,57 @@
-import { ArrowLeft, Bot, Check, CheckCheck, Copy, Film, RefreshCw, RotateCcw, Save, Sparkles, Undo2 } from 'lucide-react'
+import { ArrowLeft, Bot, Check, Copy, Film, RefreshCw, RotateCcw, Save, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 
 import { PlatformBadge } from '../components/PlatformBadge'
 import { api } from '../lib/api'
 import { describeSummaryOutcome, openDeepSeekSummary } from '../lib/deepseek'
-import { groupParagraphs, joinParagraph, segmentsToPlainText, splitSentences, type Paragraph } from '../lib/textFormatting'
+import { distributeWholeText, groupParagraphs, splitTextByWeight, transcriptAsText, type Paragraph } from '../lib/textFormatting'
 import type { DocumentDetail, EditorNavState, TranscriptSegment } from '../types'
 
-/** 让全文模式的段落框跟着内容长高，避免出现内部滚动条。 */
-function autoGrow(element: HTMLTextAreaElement) {
-  element.style.height = 'auto'
-  element.style.height = `${element.scrollHeight}px`
+/**
+ * 识别来源的整篇编辑写回：按空行分段，把每段摊回它覆盖的分段。
+ * 文本与打开时一致就直接返回原分段，一个字都不动。
+ */
+function applyWholeDraft(
+  segments: TranscriptSegment[],
+  paragraphs: Paragraph[],
+  text: string,
+): TranscriptSegment[] {
+  const mapping = distributeWholeText(segments, paragraphs, text)
+  return segments.map((segment) => {
+    const next = mapping.get(segment.id)
+    return next === undefined ? segment : { ...segment, text: next }
+  })
+}
+
+/** 草稿里有没有空行：有就说明这是「智能分句」整理成自然段的正文。 */
+function hasParagraphBreak(text: string): boolean {
+  return /\n[^\S\n]*\n/.test(text)
 }
 
 /**
- * 把全文模式里改过的段落写回分段。
+ * 字幕来源的整篇编辑写回：一行对应一条字幕。
  *
- * 按句子顺序对齐：句子数不变（改错别字、调标点）时一一对应，时间轴完全不受影响；
- * 删了句子时只清空末尾多出来的分段；加了句子时把多出的部分并进最后一段，不丢内容。
+ * 行数没变（改错别字、加标点、改写句子）时按行精确落回，时间码完全对得上；
+ * 行数变了（合并、拆行、增删）就退化成按各行原始字数比例摊回，仍然不丢字。
  */
-function applyParagraphDrafts(
-  segments: TranscriptSegment[],
-  paragraphs: Paragraph[],
-  drafts: Record<string, string>,
-): TranscriptSegment[] {
-  if (Object.keys(drafts).length === 0) return segments
+function applySubtitleDraft(segments: TranscriptSegment[], text: string): TranscriptSegment[] {
+  const targets = segments.filter((segment) => segment.text.trim())
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
 
-  const next = segments.map((segment) => ({ ...segment }))
-  const byId = new Map(next.map((segment) => [segment.id, segment]))
-
-  for (const [key, text] of Object.entries(drafts)) {
-    const paragraph = paragraphs[Number(key)]
-    if (!paragraph || text === undefined) continue
-
-    const targets = paragraph.ids
-      .map((id) => byId.get(id))
-      .filter((item): item is TranscriptSegment => Boolean(item))
-    if (targets.length === 0) continue
-
-    const pieces = splitSentences(text)
-    targets.forEach((segment, index) => {
-      if (index >= pieces.length) {
-        segment.text = ''
-        return
-      }
-      const isLast = index === targets.length - 1
-      segment.text = isLast && pieces.length > targets.length
-        ? pieces.slice(index).join('')
-        : pieces[index]
+  if (lines.length > 0 && lines.length === targets.length) {
+    const mapped = new Map(targets.map((segment, index) => [segment.id, lines[index]]))
+    return segments.map((segment) => {
+      const next = mapped.get(segment.id)
+      return next === undefined ? segment : { ...segment, text: next }
     })
   }
 
-  return next
+  const pieces = splitTextByWeight(segments.map((segment) => segment.text), text)
+  return segments.map((segment, index) => ({ ...segment, text: pieces[index] ?? '' }))
 }
 
 function timecode(milliseconds: number | null) {
@@ -105,23 +104,29 @@ export function EditorPage() {
   const [exporting, setExporting] = useState('')
   const [copiedSource, setCopiedSource] = useState(false)
   const [formatting, setFormatting] = useState(false)
-  const [statusBusy, setStatusBusy] = useState(false)
+  const [restoring, setRestoring] = useState(false)
   // 播放中的分段：音轨播放时高亮当前句，点击时间码可跳到该句
   const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   // 默认打开全文阅读，需要按时间定位或改字时再切到时间轴
   const [view, setView] = useState<TextView>('plain')
-  // 全文模式的段落草稿：编辑时先留在本地，保存时才写回分段，
-  // 否则打字过程中标点一变，分段和时间轴就会被反复重排。
-  const [paragraphDrafts, setParagraphDrafts] = useState<Record<string, string>>({})
+  // 整篇草稿：所有来源都是整篇一个框，改动先留在本地，保存/切视图时才落回分段，
+  // 否则打字过程中分段与时间轴会被反复重排。
+  const [wholeDraft, setWholeDraft] = useState<string | null>(null)
   const wordCount = useMemo(() => document?.segments.reduce((count, segment) => count + segment.text.trim().length, 0) ?? 0, [document])
   const description = useMemo(() => decodeEntities(document?.description ?? ''), [document?.description])
-  // 两种视图都要拿到段落：时间轴下保存时同样要把全文模式的改动写回。
-  // 字幕来源按原样一行一句（字幕没有标点，合并成段落会更难读）。
-  const lineByLine = document?.transcript_source === 'subtitle'
+  // 字幕来源与识别来源都用整篇编辑框，但写回方式不同（按行 / 按自然段）。
+  const subtitleSource = document?.transcript_source === 'subtitle'
   const paragraphs = useMemo(
-    () => (document ? groupParagraphs(document.segments, !lineByLine) : []),
-    [document, lineByLine],
+    () => (document && !subtitleSource ? groupParagraphs(document.segments) : []),
+    [document, subtitleSource],
+  )
+  /** 整篇文本：与「复制全文」、导出、预览同一份（字幕未整理一行一句，整理过按自然段）。 */
+  const wholeText = useMemo(
+    () => (document
+      ? transcriptAsText(document.segments, subtitleSource, document.paragraph_body)
+      : ''),
+    [document, subtitleSource],
   )
 
   useEffect(() => {
@@ -148,17 +153,42 @@ export function EditorPage() {
     return () => window.removeEventListener('beforeunload', warnBeforeUnload)
   }, [saved])
 
+  /**
+   * 把编辑框里的内容落到分段上：字幕按行对应，识别按自然段对应。
+   * 没有改动时原样返回，避免白白重排时间轴。
+   */
+  function writeBack(current: DocumentDetail): TranscriptSegment[] {
+    if (wholeDraft === null || wholeDraft === wholeText) return current.segments
+    return subtitleSource
+      ? applySubtitleDraft(current.segments, wholeDraft)
+      : applyWholeDraft(current.segments, paragraphs, wholeDraft)
+  }
+
+  /**
+   * 把编辑框里的内容落库。
+   *
+   * 字幕文案的草稿里带空行，说明这是「智能分句」整理出的自然段：按段落重建分段
+   * （一段一条，时间按字数比例分摊）。否则下次打开又变回一行一句，看着像整理被撤销了。
+   * 其余情况按现有分段写回：字幕按行一一对应，识别按自然段对应。
+   */
+  async function persistBody(current: DocumentDetail, title: string): Promise<DocumentDetail> {
+    if (subtitleSource && wholeDraft !== null && hasParagraphBreak(wholeDraft)) {
+      const updated = await api.applyPolishedText(current.id, wholeDraft)
+      const summary = await api.saveDocument(current.id, { title })
+      return { ...updated, ...summary, title }
+    }
+    const updated = await api.saveSegments(current.id, writeBack(current))
+    const summary = await api.saveDocument(current.id, { title })
+    return { ...updated, ...summary, title }
+  }
+
   async function persistDocument() {
     if (!document) return null
     const title = document.title.trim()
     if (!title) throw new Error('文案标题不能为空')
-    // 全文模式的段落改动先落到分段上，再统一提交
-    const segments = applyParagraphDrafts(document.segments, paragraphs, paragraphDrafts)
-    const updated = await api.saveSegments(document.id, segments)
-    const summary = await api.saveDocument(document.id, { title })
-    const merged = { ...updated, ...summary, title }
+    const merged = await persistBody(document, title)
     setDocument(merged)
-    setParagraphDrafts({})
+    setWholeDraft(null)
     setSaved(true)
     return merged
   }
@@ -177,9 +207,9 @@ export function EditorPage() {
     }
   }
 
-  /** 当前编辑内容的纯文本（全文模式下未保存的段落改动也按已提交的分段为准）。 */
+  /** 当前编辑内容的纯文本：与编辑框里看到的一致（未保存的改动也先摊回分段再拼装）。 */
   function currentPlainText(): string {
-    return document ? segmentsToPlainText(document.segments) : ''
+    return document ? transcriptAsText(writeBack(document), subtitleSource) : ''
   }
 
   async function copyPlainText() {
@@ -268,8 +298,14 @@ export function EditorPage() {
     return () => window.clearTimeout(timer)
   }, [saved, saving])
 
-  /** 智能分句：把手写/识别文本重排为句级分段，时间轴按句子对齐。 */
-  async function autoFormat() {
+  /**
+   * 智能分句：把文案整理成带标点的自然段。
+   *
+   * 字幕先合并逐字滚动的重复条目，再用本地标点模型补标点；识别结果自带标点，
+   * 只重新切句成段。整理结果只填进编辑框，用户确认后再保存——整理得不满意，
+   * 直接改或刷新即可，不会污染已保存的分段。
+   */
+  async function polishText() {
     if (!document) return
     setFormatting(true)
     setActionError('')
@@ -277,11 +313,13 @@ export function EditorPage() {
     try {
       // 先落盘现有改动，避免整理结果被旧草稿覆盖
       await persistDocument()
-      const updated = await api.autoFormat(document.id)
-      setDocument(updated)
-      setParagraphDrafts({})
-      setSaved(true)
-      setActionMessage('已按句子重新分段，可以直接逐句校对')
+      const result = await api.polish(document.id)
+      setWholeDraft(result.text)
+      setSaved(false)
+      const notes = [`已整理为 ${result.paragraphs} 个自然段、${result.sentences} 句`]
+      if (result.merged > 0) notes.push(`合并了 ${result.merged} 条滚动重复字幕`)
+      if (!result.punctuated) notes.push('识别结果自带标点，未再补标点')
+      setActionMessage(`${notes.join('，')}；确认后点保存`)
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : '智能分句失败，请稍后重试')
     } finally {
@@ -289,22 +327,29 @@ export function EditorPage() {
     }
   }
 
-  /** 标记已校对 / 退回草稿：给文案库里区分「还没看」和「已经过了一遍」。 */
-  async function toggleReviewed() {
+  /**
+   * 恢复原始字幕行：智能分句是结构性改动（分段被重建成自然段），
+   * 这里用识别原文退回「一行一句」，让用户能重来一次。
+   */
+  async function restoreLines() {
     if (!document) return
-    const next = document.status === 'reviewed' ? 'draft' : 'reviewed'
-    setStatusBusy(true)
+    const confirmed = window.confirm(
+      '将用识别原文重建分段，当前正文会被替换（识别原文不受影响）。继续吗？',
+    )
+    if (!confirmed) return
+    setRestoring(true)
     setActionError('')
     setActionMessage('')
     try {
-      await persistDocument()
-      const updated = await api.saveDocument(document.id, { status: next })
-      setDocument((current) => (current ? { ...current, status: updated.status } : current))
-      setActionMessage(next === 'reviewed' ? '已标记为校对完成' : '已退回草稿状态')
+      const updated = await api.restoreLines(document.id)
+      setDocument(updated)
+      setWholeDraft(null)
+      setSaved(true)
+      setActionMessage(`已恢复为 ${updated.segments.length} 行原始字幕`)
     } catch (reason) {
-      setActionError(reason instanceof Error ? reason.message : '状态更新失败，请稍后重试')
+      setActionError(reason instanceof Error ? reason.message : '恢复失败，请稍后重试')
     } finally {
-      setStatusBusy(false)
+      setRestoring(false)
     }
   }
 
@@ -351,15 +396,14 @@ export function EditorPage() {
     row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [activeSegmentId, view])
 
-  /** 切换视图前先把全文模式的改动落到分段上，免得「切到时间轴就看不见改动」。 */
+  /** 切换视图前先把编辑框里的改动落到分段上，免得「切到时间轴就看不见改动」。 */
   function switchView(next: TextView) {
-    if (Object.keys(paragraphDrafts).length > 0) {
+    const dirty = wholeDraft !== null && wholeDraft !== wholeText
+    if (dirty) {
       setDocument((current) =>
-        current
-          ? { ...current, segments: applyParagraphDrafts(current.segments, paragraphs, paragraphDrafts) }
-          : current,
+        current ? { ...current, segments: writeBack(current) } : current,
       )
-      setParagraphDrafts({})
+      setWholeDraft(null)
     }
     setView(next)
   }
@@ -389,9 +433,6 @@ export function EditorPage() {
         <Link className="icon-button" to={backTo} aria-label={`返回${backLabel}`} title={`返回${backLabel}`} onClick={confirmLeave}><ArrowLeft size={19} /></Link>
         <div className="editor-title-group"><input aria-label="文案标题" title={document.title} value={document.title} onChange={(event) => { setDocument({ ...document, title: event.target.value }); setSaved(false) }} /><PlatformBadge platform={document.platform} />{!saved && <span className="save-state">有未保存的更改</span>}</div>
         <div className="editor-actions">
-          <button className="secondary-button" type="button" onClick={() => void toggleReviewed()} disabled={statusBusy}>
-            {document.status === 'reviewed' ? <><Undo2 size={16} /> 退回草稿</> : <><CheckCheck size={16} /> 标记已校对</>}
-          </button>
           <button className="secondary-button" type="button" onClick={() => void copyPlainText()}><Copy size={16} /> 复制全文</button>
           <button className="secondary-button" type="button" onClick={() => void summarizeWithDeepSeek()} title="把文案与总结指令带到 DeepSeek（内容会发送给第三方服务）"><Bot size={16} /> AI 总结</button>
           <button className="primary-button" type="button" onClick={() => void save()} disabled={saving}><Save size={16} /> {saving ? '保存中' : '保存'}</button>
@@ -436,9 +477,15 @@ export function EditorPage() {
         </aside>
         <main className="transcript-editor" aria-label="文案编辑器">
           <div className="transcript-heading">
-            <div><h1>校对文案</h1><span className="editor-subtitle">{view === 'timeline' ? `时间轴 · 共 ${document.segments.length} 段 · ${wordCount} 字` : `全文 · ${paragraphs.length} ${lineByLine ? '行' : '个自然段'} · ${wordCount} 字`}</span></div>
+            <div><h1>校对文案</h1><span className="editor-subtitle">{view === 'timeline' ? `时间轴 · 共 ${document.segments.length} 段 · ${wordCount} 字` : subtitleSource ? `全文 · 整篇编辑（${document.segments.length} 行字幕）· ${wordCount} 字` : `全文 · 整篇编辑 · ${wordCount} 字`}</span></div>
             <div className="heading-side">
-              <button className="text-button" type="button" onClick={() => void autoFormat()} disabled={formatting || document.segments.length === 0} title="把识别结果按句子重新分段，便于逐句校对">
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => void polishText()}
+                disabled={formatting || document.segments.length === 0}
+                title="把文案整理成带标点的自然段（字幕需要先在设置里安装「中文标点恢复」模型）"
+              >
                 <Sparkles size={15} /> {formatting ? '整理中' : '智能分句'}
               </button>
               <div className="view-switch" role="tablist" aria-label="展示方式">
@@ -481,32 +528,37 @@ export function EditorPage() {
             </div>
           ) : (
             <div className="fulltext-view">
-              {paragraphs.length === 0 ? (
+              {wholeText.trim() === '' ? (
                 <p className="compact-empty">还没有内容</p>
               ) : (
-                paragraphs.map((paragraph, index) => (
-                  <textarea
-                    className={`fulltext-paragraph${lineByLine ? ' fulltext-line' : ''}`}
-                    key={paragraph.ids.join('-')}
-                    value={paragraphDrafts[String(index)] ?? joinParagraph(paragraph.sentences)}
-                    ref={(element) => {
-                      if (element) autoGrow(element)
-                    }}
-                    onChange={(event) => {
-                      const text = event.target.value
-                      setParagraphDrafts((current) => ({ ...current, [String(index)]: text }))
-                      setSaved(false)
-                      autoGrow(event.target)
-                    }}
-                    aria-label={`第 ${index + 1} ${lineByLine ? '行' : '自然段'}`}
-                  />
-                ))
+                <textarea
+                  className="fulltext-paragraph fulltext-whole"
+                  value={wholeDraft ?? wholeText}
+                  onChange={(event) => {
+                    setWholeDraft(event.target.value)
+                    setSaved(false)
+                  }}
+                  aria-label="整篇文案"
+                />
               )}
               <p className="fulltext-note">
-                {lineByLine
-                  ? '这条文案来自平台字幕，按字幕原样一行一句展示：字幕本身没有标点，合并成段落反而更难读。想要带标点的段落，可在「工作台」关掉「优先使用平台字幕」后重新提取。'
-                  : '全文按自然段排版，可以直接修改；改动会写回对应分段。要按时间逐句定位请切到「时间轴」，保存用 Ctrl + S。'}
+                {subtitleSource
+                  ? '这条文案来自平台字幕：没整理时一行就是一条字幕（时间码精确）；点「智能分句」整理后，一个自然段就是一个分段（时间码按字数比例分摊）。两种形态都能整篇编辑、查找替换，保存后重新打开保持一致。要逐行对照请切到「时间轴」。'
+                  : '全文按自然段排版，整篇放在一个框里编辑：段落之间用空行分隔，改动会写回对应分段。要按时间逐句定位请切到「时间轴」，保存用 Ctrl + S。'}
               </p>
+              {subtitleSource && (
+                <div className="fulltext-actions">
+                  <button
+                    className="text-button"
+                    type="button"
+                    onClick={() => void restoreLines()}
+                    disabled={restoring}
+                  >
+                    <RotateCcw size={14} /> {restoring ? '恢复中' : '恢复原始字幕行'}
+                  </button>
+                  <span>整理过的分段想退回字幕原样，用识别原文重建一行一句。</span>
+                </div>
+              )}
             </div>
           )}
         </main>

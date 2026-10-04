@@ -308,7 +308,6 @@ export function LibraryPage() {
                     )}
                   </span>
                   <strong>{document.title}</strong>
-                  {document.status === 'reviewed' && <span className="reviewed-badge" title="已标记为校对完成">已校对</span>}
                 </span>
                 {/* 来源单独成列：批量用主色、单条弱化，整页每行都挂标签才不会太吵 */}
                 <span className="origin-cell">

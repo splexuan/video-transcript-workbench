@@ -5,10 +5,14 @@ from enum import StrEnum
 
 
 class ModelEngine(StrEnum):
-    """识别引擎类型。一个引擎可以对应多个可下载的模型规格。"""
+    """识别引擎类型。一个引擎可以对应多个可下载的模型规格。
+
+    标点引擎不产出文案，只给「智能分句」把没有标点的字幕整理成带标点的句子。
+    """
 
     SENSEVOICE = "sensevoice"
     FASTER_WHISPER = "faster_whisper"
+    PUNCTUATION = "punctuation"
 
 
 class ModelTier(StrEnum):
@@ -16,6 +20,8 @@ class ModelTier(StrEnum):
 
     FAST = "fast"
     ACCURATE = "accurate"
+    # 辅助能力（标点恢复），不属于任何一种提取模式
+    UTILITY = "utility"
 
 
 class ModelState(StrEnum):

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512" role="img" aria-label="文案工作台">
+  <!--
+    文案工作台应用图标：暖纸底 + 陶土主色的品牌色。
+    上方的播放三角代表「视频」，下方三行代表「文案」，合起来就是产品的核心动作。
+    颜色取自前端 token：--primary #a9502e / --primary-hover #92411f，纸色 #faf3ea。
+    前端页签用的是同一份图形（frontend/public/favicon.svg），改这里要一起同步。
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#be643e" />
+      <stop offset="1" stop-color="#8e3c1a" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14.5" fill="url(#tile)" />
+  <path d="M21.4 8.9V27.7L42.6 18.25Z" fill="#faf3ea" />
+  <g fill="#faf3ea">
+    <rect x="18.25" y="31.6" width="27.5" height="5.5" rx="2.75" />
+    <rect x="18.25" y="40.6" width="27.5" height="5.5" rx="2.75" />
+    <rect x="18.25" y="49.6" width="17.5" height="5.5" rx="2.75" />
+  </g>
+</svg>

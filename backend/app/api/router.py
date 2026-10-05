@@ -1,0 +1,738 @@
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from importlib.util import find_spec
+from pathlib import Path
+from typing import Annotated
+from urllib.parse import quote
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse, Response
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.application.exporters import export_document
+from app.application.pagination import MAX_PAGE_SIZE, InvalidCursor
+from app.application.services import (
+    DEFAULT_AUTHOR_PAGE,
+    DEFAULT_DOCUMENT_SORT,
+    DOCUMENT_SORTS,
+    MAX_AUTHOR_PAGE,
+    TERMINAL_JOB_STATUSES,
+    DocumentExportError,
+    DocumentInUseError,
+    JobBatchControlError,
+    JobBatchIdempotencyConflict,
+    JobBatchValidationError,
+    JobRetryError,
+    apply_body_text,
+    auto_format_segments,
+    cancel_job_batch,
+    create_job,
+    create_job_batch,
+    delete_document,
+    delete_job_record,
+    export_documents_bundle,
+    find_document_media,
+    get_document,
+    get_job_batch,
+    list_document_authors,
+    list_document_titles,
+    list_documents,
+    list_job_batches,
+    list_jobs,
+    pause_job_batch,
+    polish_document,
+    preflight_job_batch,
+    read_settings,
+    replace_segments,
+    restore_line_segments,
+    resume_job_batch,
+    retry_failed_job_batch,
+    retry_job,
+    serialize_job_batch,
+    update_settings,
+)
+from app.config import settings
+from app.domain import EngineUnavailableError, ModelNotFoundError
+from app.infrastructure.cover_store import cover_path
+from app.infrastructure.credential_store import all_status
+from app.infrastructure.database import get_session
+from app.infrastructure.media import tools_ready
+from app.infrastructure.model_catalog import require_spec
+from app.infrastructure.models import Document, Job, JobBatch
+from app.schemas import (
+    AuthorPage,
+    BodyWrite,
+    DocumentDetail,
+    DocumentRead,
+    DocumentTitleRead,
+    DocumentUpdate,
+    JobBatchCreate,
+    JobBatchDetailRead,
+    JobBatchPreflightRead,
+    JobBatchPreflightRequest,
+    JobBatchRead,
+    JobCreate,
+    JobRead,
+    Page,
+    PolishRead,
+    SegmentsReplace,
+    SettingPatch,
+)
+
+router = APIRouter(prefix="/api")
+SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def validated_model_id(model_id: str | None) -> str | None:
+    """校验首页传来的模型 id，避免把未知模型写进任务。"""
+
+    if not model_id:
+        return None
+    try:
+        require_spec(model_id)
+    except ModelNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return model_id
+
+
+ALLOWED_MEDIA_SUFFIXES = {
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".wav",
+    ".flac",
+    ".ogg",
+    ".opus",
+    ".mp4",
+    ".mkv",
+    ".mov",
+    ".webm",
+    ".avi",
+}
+
+
+@router.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "name": settings.app_name, "version": settings.app_version}
+
+
+@router.post("/jobs", response_model=JobRead, status_code=status.HTTP_201_CREATED)
+def enqueue_job(payload: JobCreate, session: SessionDep) -> Job:
+    if payload.source_type == "file":
+        raise HTTPException(status_code=400, detail="本地文件必须通过文件选择器导入")
+    payload.model_id = validated_model_id(payload.model_id)
+    return create_job(session, payload)
+
+
+@router.post("/job-batches/preflight", response_model=JobBatchPreflightRead)
+def preflight_batch(payload: JobBatchPreflightRequest) -> JobBatchPreflightRead:
+    return preflight_job_batch(payload.sources)
+
+
+@router.post(
+    "/job-batches",
+    response_model=JobBatchDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def enqueue_job_batch(payload: JobBatchCreate, session: SessionDep) -> JobBatchDetailRead:
+    payload.model_id = validated_model_id(payload.model_id)
+    try:
+        batch = create_job_batch(session, payload)
+    except JobBatchValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except JobBatchIdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.get("/job-batches", response_model=Page[JobBatchRead])
+def get_job_batches(
+    session: SessionDep,
+    status: Annotated[list[str] | None, Query(max_length=10)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
+    cursor: Annotated[str | None, Query(max_length=256)] = None,
+) -> Page[JobBatchRead]:
+    try:
+        batches, next_cursor = list_job_batches(
+            session,
+            statuses=status,
+            limit=limit,
+            cursor=cursor,
+        )
+    except InvalidCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Page(
+        items=[serialize_job_batch(batch) for batch in batches],
+        next_cursor=next_cursor,
+    )
+
+
+def _job_batch_or_404(session: Session, batch_id: str) -> JobBatch:
+    batch = get_job_batch(session, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    return batch
+
+
+@router.get("/job-batches/{batch_id}", response_model=JobBatchDetailRead)
+def job_batch_detail(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    return serialize_job_batch(_job_batch_or_404(session, batch_id), include_jobs=True)
+
+
+@router.post("/job-batches/{batch_id}/pause", response_model=JobBatchDetailRead)
+def pause_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = pause_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.post("/job-batches/{batch_id}/resume", response_model=JobBatchDetailRead)
+def resume_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = resume_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.post("/job-batches/{batch_id}/cancel", response_model=JobBatchDetailRead)
+def cancel_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = cancel_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.post(
+    "/job-batches/{batch_id}/retry-failed",
+    response_model=JobBatchDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def retry_failed_batch(batch_id: str, session: SessionDep) -> JobBatchDetailRead:
+    try:
+        batch = retry_failed_job_batch(session, _job_batch_or_404(session, batch_id))
+    except JobBatchControlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return serialize_job_batch(batch, include_jobs=True)
+
+
+@router.post("/jobs/upload", response_model=JobRead, status_code=status.HTTP_201_CREATED)
+async def upload_job(
+    session: SessionDep,
+    file: Annotated[UploadFile, File()],
+    mode: Annotated[str, Form()] = "auto",
+    model_id: Annotated[str | None, Form()] = None,
+    prefer_subtitle: Annotated[bool, Form()] = True,
+) -> Job:
+    original_name = file.filename or "media"
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in ALLOWED_MEDIA_SUFFIXES:
+        raise HTTPException(status_code=400, detail="不支持此文件格式")
+    if mode not in {"auto", "fast", "accurate"}:
+        raise HTTPException(status_code=400, detail="不支持此提取模式")
+
+    settings.inbox_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", Path(original_name).name).strip()
+    safe_name = safe_name[-180:] or f"media{suffix}"
+    destination = settings.inbox_dir / f"{uuid4()}__{safe_name}"
+    total = 0
+    limit = settings.upload_max_mb * 1024 * 1024
+    try:
+        with destination.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > limit:
+                    raise HTTPException(status_code=413, detail=f"文件不能超过 {settings.upload_max_mb} MB")
+                output.write(chunk)
+        if total == 0:
+            raise HTTPException(status_code=400, detail="文件为空")
+        return create_job(
+            session,
+            JobCreate(
+                source_type="file",
+                source=str(destination),
+                mode=mode,
+                model_id=validated_model_id(model_id),
+                prefer_subtitle=prefer_subtitle,
+            ),
+        )
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+
+@router.get("/jobs", response_model=Page[JobRead])
+def get_jobs(
+    session: SessionDep,
+    standalone: Annotated[bool, Query()] = False,
+    status: Annotated[list[str] | None, Query(max_length=10)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+    cursor: Annotated[str | None, Query(max_length=256)] = None,
+) -> Page[JobRead]:
+    try:
+        jobs, next_cursor = list_jobs(
+            session,
+            standalone=standalone,
+            statuses=status,
+            limit=limit,
+            cursor=cursor,
+        )
+    except InvalidCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Page(items=jobs, next_cursor=next_cursor)
+
+
+@router.post(
+    "/jobs/{job_id}/retry",
+    response_model=JobRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def retry_failed_job(job_id: str, session: SessionDep) -> Job:
+    """按原参数重新排队一次；失败后重试不必回到工作台重新粘贴链接。"""
+
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job.batch_id:
+        raise HTTPException(status_code=400, detail="批次子任务请在所属批次中统一重试")
+    if job.status not in TERMINAL_JOB_STATUSES:
+        raise HTTPException(status_code=400, detail="任务还在进行中，不需要重试")
+    try:
+        return retry_job(session, job)
+    except JobRetryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobRead)
+def cancel_job(job_id: str, session: SessionDep) -> Job:
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job.batch_id:
+        raise HTTPException(status_code=400, detail="批次子任务请在所属批次中统一取消")
+    if job.status not in {"completed", "failed", "cancelled"}:
+        job.status = "cancelled"
+        job.message = "已取消"
+        session.commit()
+    return job
+
+
+@router.delete("/jobs/{job_id}")
+def remove_job(job_id: str, session: SessionDep) -> dict[str, str | bool]:
+    """删除一条已经结束的任务记录；进行中的任务要先取消。"""
+
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job.batch_id:
+        raise HTTPException(status_code=400, detail="批次子任务会随批次保留，不能单独删除")
+    if job.status not in TERMINAL_JOB_STATUSES:
+        raise HTTPException(status_code=400, detail="任务还在进行中，请先取消再删除")
+    delete_job_record(session, job)
+    return {"id": job_id, "removed": True}
+
+
+@router.get("/documents", response_model=Page[DocumentRead])
+def documents(
+    session: SessionDep,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    platform: Annotated[str | None, Query(max_length=32)] = None,
+    uploader: Annotated[str | None, Query(max_length=200)] = None,
+    sort: Annotated[str, Query(max_length=16)] = DEFAULT_DOCUMENT_SORT,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
+    cursor: Annotated[str | None, Query(max_length=256)] = None,
+) -> Page[DocumentRead]:
+    if sort not in DOCUMENT_SORTS:
+        raise HTTPException(status_code=400, detail="不支持的排序方式")
+    try:
+        items, next_cursor = list_documents(
+            session,
+            query=q,
+            platform=platform,
+            uploader=uploader,
+            sort=sort,
+            limit=limit,
+            cursor=cursor,
+        )
+    except InvalidCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Page(items=items, next_cursor=next_cursor)
+
+
+@router.get("/documents/authors", response_model=AuthorPage)
+def document_authors(
+    session: SessionDep,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_AUTHOR_PAGE)] = DEFAULT_AUTHOR_PAGE,
+) -> AuthorPage:
+    """按作者浏览文案库：每位作者一条聚合，供文案库的「按作者浏览」用。
+
+    注意这条必须声明在 `/documents/{document_id}` 之前，否则会被当成一个文档 id。
+    """
+
+    items, total = list_document_authors(session, query=q, limit=limit)
+    return AuthorPage(items=items, total=total)
+
+
+@router.get("/documents/titles", response_model=list[DocumentTitleRead])
+def document_titles(
+    session: SessionDep,
+    ids: Annotated[list[str] | None, Query(max_length=100)] = None,
+) -> list[Document]:
+    """只回 id 与标题：任务行、批次行要显示文案标题，不必为此把整个文案库拉回前端。
+
+    注意这条必须声明在 `/documents/{document_id}` 之前，否则会被当成一个文档 id。
+    """
+
+    return list_document_titles(session, ids or [])
+
+
+@router.get("/documents/export")
+def export_documents(
+    session: SessionDep,
+    ids: Annotated[list[str] | None, Query(max_length=64)] = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    platform: Annotated[str | None, Query(max_length=32)] = None,
+    uploader: Annotated[str | None, Query(max_length=200)] = None,
+    sort: Annotated[str, Query(max_length=16)] = DEFAULT_DOCUMENT_SORT,
+    file_format: Annotated[str, Query(alias="format")] = "txt",
+) -> Response:
+    """把文案打成一个 zip：每篇一个文件，内容与单篇导出同源。
+
+    给了 `ids`（重复参数）就只导勾选的那些，其余筛选项忽略；没给就导当前筛选下的全部。
+
+    注意这条必须声明在 `/documents/{document_id}` 之前，否则会被当成一个文档 id。
+    """
+
+    if sort not in DOCUMENT_SORTS:
+        raise HTTPException(status_code=400, detail="不支持的排序方式")
+    try:
+        payload = export_documents_bundle(
+            session,
+            document_ids=ids,
+            query=q,
+            platform=platform,
+            uploader=uploader,
+            sort=sort,
+            file_format=file_format,
+        )
+    except (DocumentExportError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = quote(f"文案导出-{datetime.now().strftime('%Y%m%d-%H%M')}.zip")
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+def _document_detail(session: Session, document: Document) -> DocumentDetail:
+    """文档详情：附带来源作品元信息与「原始音轨是否还在本机」。
+
+    前端据此决定要不要渲染播放器；正文形态由 paragraph_body 决定。
+    """
+
+    payload = DocumentDetail.model_validate(document)
+    payload.media_available = find_document_media(session, document.id) is not None
+    return payload
+
+
+@router.get("/documents/{document_id}", response_model=DocumentDetail)
+def document_detail(
+    document_id: str,
+    session: SessionDep,
+) -> DocumentDetail:
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    return _document_detail(session, document)
+
+
+@router.patch("/documents/{document_id}", response_model=DocumentRead)
+def edit_document(
+    document_id: str,
+    payload: DocumentUpdate,
+    session: SessionDep,
+) -> Document:
+    document = session.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    for key, value in payload.model_dump(exclude_none=True).items():
+        setattr(document, key, value)
+    session.commit()
+    return document
+
+
+@router.delete("/documents/{document_id}")
+def remove_document(document_id: str, session: SessionDep) -> dict[str, str | bool]:
+    """删除文案：分段、封面、关联任务记录与工作目录一并清掉，不可恢复。"""
+
+    document = session.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    try:
+        delete_document(session, document)
+    except DocumentInUseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"id": document_id, "removed": True}
+
+
+@router.put("/documents/{document_id}/segments", response_model=DocumentDetail)
+def save_segments(
+    document_id: str,
+    payload: SegmentsReplace,
+    session: SessionDep,
+) -> DocumentDetail:
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    return _document_detail(session, replace_segments(session, document, payload.segments))
+
+
+@router.put("/documents/{document_id}/body", response_model=DocumentDetail)
+def save_body(
+    document_id: str,
+    payload: BodyWrite,
+    session: SessionDep,
+) -> DocumentDetail:
+    """整篇正文保存：一行一条分段，行数变了就按行重建（时间按字数比例分摊）。
+
+    编辑页整篇框与「智能分句」都走这一条；行数没变时就地改字，时间码完全不动。
+    """
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    try:
+        updated = apply_body_text(session, document, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _document_detail(session, updated)
+
+
+@router.post("/documents/{document_id}/auto-format", response_model=DocumentDetail)
+def auto_format(document_id: str, session: SessionDep) -> DocumentDetail:
+    """把段落/长句文本重排为句级分段，便于逐句校对。"""
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    if not document.segments:
+        raise HTTPException(status_code=400, detail="文案还没有可整理的内容")
+    return _document_detail(session, auto_format_segments(session, document))
+
+
+@router.post("/documents/{document_id}/polish", response_model=PolishRead)
+def polish(document_id: str, session: SessionDep) -> PolishRead:
+    """智能分句：把文案整理成带标点的自然段，并直接把结果写回分段。
+
+    一次请求即生效——切句、合并滚动重复、按需补标点，然后一段一条落库，
+    返回新文案给前端替换。正文没有标点又没装标点模型时给一条可读的提示。
+    """
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    if not document.segments:
+        raise HTTPException(status_code=400, detail="文案还没有可整理的内容")
+    try:
+        result = polish_document(session, document)
+        # 整理结果一定是段落形态，即便只有一段
+        updated = apply_body_text(session, document, result.text, paragraphs=True)
+    except EngineUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PolishRead(
+        text=result.text,
+        paragraphs=len(updated.segments),
+        sentences=result.sentences,
+        merged=result.merged,
+        punctuated=result.punctuated,
+        document=_document_detail(session, updated),
+    )
+
+
+@router.post("/documents/{document_id}/restore-lines", response_model=DocumentDetail)
+def restore_lines(document_id: str, session: SessionDep) -> DocumentDetail:
+    """恢复原始字幕行：从识别原文重建「一行一句」的分段（撤销智能分句的结构改动）。"""
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    try:
+        updated = restore_line_segments(session, document)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _document_detail(session, updated)
+
+
+@router.get("/documents/{document_id}/media")
+def document_media(document_id: str, session: SessionDep) -> FileResponse:
+    """播放文档的原始音视频；未开启「保留原始音视频」时文件已在任务结束时清理。"""
+
+    document = session.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    media = find_document_media(session, document_id)
+    if media is None:
+        raise HTTPException(
+            status_code=404,
+            detail="原始音视频已清理，可在「设置」里开启「保留原始音视频」后重新提取",
+        )
+    return FileResponse(media, media_type="audio/wav")
+
+
+@router.get("/documents/{document_id}/cover")
+def document_cover(document_id: str, session: SessionDep) -> FileResponse:
+    """文档的封面图；本地文件或封面下载失败时返回 404，前端据此不渲染图片。"""
+
+    document = session.get(Document, document_id)
+    if document is None or not document.cover_file:
+        raise HTTPException(status_code=404, detail="这条文案没有封面图")
+    path = cover_path(document.cover_file)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="封面图已不存在")
+    return FileResponse(path)
+
+
+@router.get("/documents/{document_id}/export")
+def download_export(
+    document_id: str,
+    session: SessionDep,
+    file_format: Annotated[str, Query(alias="format")] = "txt",
+) -> Response:
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    # 与编辑页、预览同一份正文规则（一行一句；整理过的段落之间空行）
+    try:
+        content, media_type, extension = export_document(
+            document,
+            file_format,
+            paragraphs=document.paragraph_body,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = quote(f"{document.title}.{extension}")
+    return Response(
+        content=content.encode("utf-8-sig") if extension in {"txt", "srt"} else content.encode("utf-8"),
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+@router.get("/connectors")
+def connectors(session: SessionDep) -> list[dict[str, str]]:
+    ffmpeg_ready = tools_ready()
+    ytdlp_ready = find_spec("yt_dlp") is not None
+    credentials = {item.platform: item for item in all_status()}
+    # 视频号没有本机解析方案，依赖兜底解析接口的 Key
+    fallback_ready = read_settings(session)["fallback_api_key_set"]
+
+    def link_connector(platform_id: str, name: str, *, supports_subtitle: bool) -> dict[str, str]:
+        """链接类平台：运行组件就绪即算可用；凭据必需的平台还要求先配置 Cookie。
+
+        B站的凭据是可选的（公开视频不登录也能解析），配置后能读会员与登录可见内容。
+        """
+
+        if not ytdlp_ready:
+            return {
+                "id": platform_id,
+                "name": name,
+                "status": "needs_setup",
+                "detail": "缺少 yt-dlp 运行组件",
+            }
+        credential = credentials.get(platform_id)
+        if credential is not None and credential.required and not credential.configured:
+            return {
+                "id": platform_id,
+                "name": name,
+                "status": "needs_setup",
+                "detail": "需要导入 Cookie 才能解析",
+            }
+        if credential is not None and credential.configured:
+            return {
+                "id": platform_id,
+                "name": name,
+                "status": "ready",
+                "detail": "已配置访问凭据，可读取会员与登录可见内容"
+                if supports_subtitle
+                else "已配置 Cookie，支持公开作品链接",
+            }
+        return {
+            "id": platform_id,
+            "name": name,
+            "status": "ready",
+            "detail": "支持公开链接：字幕优先，音轨转写回退"
+            + ("；配置访问凭据可读取会员内容" if supports_subtitle else ""),
+        }
+
+    def wechat_connector() -> dict[str, str]:
+        """视频号只能通过兜底解析接口处理：先要有 Key，其次要有 FFmpeg。"""
+
+        if not fallback_ready:
+            return {
+                "id": "wechat",
+                "name": "视频号",
+                "status": "needs_setup",
+                "detail": "需要在「设置」页配置兜底解析接口的 API Key",
+            }
+        return {
+            "id": "wechat",
+            "name": "视频号",
+            "status": "ready" if ffmpeg_ready else "needs_setup",
+            "detail": "粘贴视频号分享链接即可提取" if ffmpeg_ready else "需要安装或配置 FFmpeg",
+        }
+
+    # 识别模型的状态由 /api/models 单独提供，这里只列内容来源。
+    return [
+        {
+            "id": "local",
+            "name": "本地文件",
+            "status": "ready" if ffmpeg_ready else "needs_setup",
+            "detail": "FFmpeg 已就绪" if ffmpeg_ready else "需要安装或配置 FFmpeg",
+        },
+        link_connector("bilibili", "B站", supports_subtitle=True),
+        link_connector("douyin", "抖音", supports_subtitle=False),
+        # 快手、小红书都自己读移动端分享页：游客就能解析，不需要 yt-dlp 和登录态
+        {
+            "id": "kuaishou",
+            "name": "快手",
+            "status": "ready" if ffmpeg_ready else "needs_setup",
+            "detail": "支持公开分享链接：直接读取视频音轨"
+            if ffmpeg_ready
+            else "需要安装或配置 FFmpeg",
+        },
+        {
+            "id": "xiaohongshu",
+            "name": "小红书",
+            "status": "ready" if ffmpeg_ready else "needs_setup",
+            "detail": "公开视频无需登录，粘贴链接即可提取"
+            if ffmpeg_ready
+            else "需要安装或配置 FFmpeg",
+        },
+        wechat_connector(),
+    ]
+
+
+@router.get("/settings")
+def get_settings(session: SessionDep) -> dict[str, str | bool]:
+    return read_settings(session)
+
+
+@router.patch("/settings")
+def patch_settings(
+    payload: SettingPatch,
+    session: SessionDep,
+) -> dict[str, str | bool]:
+    return update_settings(session, payload)

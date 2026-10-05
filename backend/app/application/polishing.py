@@ -1,14 +1,14 @@
 """智能分句：把文案整理成带标点的自然段。
 
-平台字幕（尤其 AI 字幕）整段没有标点，条目边界也和语义无关，直接读很难用。
-这里做三件事：
+平台字幕（尤其 AI 字幕）整段没有标点，条目边界也和语义无关，直接读很难用；
+识别结果虽然自带标点，也常常整段挤在一起。这里对两者用同一套规则：
 
 1. 合并逐字/滚动字幕的重复内容——B站等平台的逐字字幕会把同一句话反复推送；
 2. 补标点：**只在正文还没有标点时**才调用本地标点模型。已经整理过的正文再送一遍
    模型，标点会叠在一起（「。。。」「，，」，段首还会冒出孤立的句号）；
 3. 按句末标点切成句子，再按句数/字数组织成自然段。
 
-整理结果只用来填进编辑框让用户过目，不直接改数据库里的分段——确认后再保存。
+返回的正文由调用方直接写成段落级分段（一段一条），点一下就生效。
 """
 
 from __future__ import annotations
@@ -132,26 +132,21 @@ def _tail_head_overlap(left: str, right: str) -> int:
 def polish_lines(
     lines: Sequence[str],
     *,
-    subtitle: bool,
     punctuate: Callable[[str], str] | None = None,
 ) -> PolishedTranscript:
-    """把文案条目整理成自然段。
+    """把文案条目整理成自然段：合并滚动重复、按需补标点、切成句子再成段。
 
-    subtitle 为真时先合并滚动重复，再用 punctuate 补标点（传 None 表示不补，
-    例如标点模型尚未安装）。识别结果自带标点，只需要重新切成句子再成段。
+    punctuate 传函数就补标点（正文已带标点时自动跳过，避免叠成「。。。」），
+    传 None 表示不补（标点模型未安装）。
     """
 
-    merged_count = 0
-    working = list(lines)
-    if subtitle and punctuate is not None:
-        # 补标点前先合并重复：把带重复的文本喂给标点模型，标点会加在重复内容上
-        working, merged_count = merge_overlapping_lines(working)
+    working, merged_count = merge_overlapping_lines(lines)
 
     blocks = [text.strip() for text in working if text.strip()]
     joined = join_paragraph(blocks)
 
     punctuated = False
-    if subtitle and punctuate is not None and joined and not looks_punctuated(joined):
+    if punctuate is not None and joined and not looks_punctuated(joined):
         joined = punctuate(joined)
         punctuated = True
 

@@ -28,22 +28,6 @@ def reset_documents(session) -> None:
     session.commit()
 
 
-def link_subtitle_job(session, document_id: str) -> None:
-    """给文案挂一条「平台字幕来源」的任务：批量导出据此改成一行一句。"""
-
-    session.add(
-        Job(
-            document_id=document_id,
-            platform="bilibili",
-            source_type="url",
-            source_value="https://www.bilibili.com/video/BVsubtitle",
-            status="completed",
-            transcript_source="subtitle",
-        )
-    )
-    session.commit()
-
-
 def seed(
     session,
     *,
@@ -248,22 +232,28 @@ def test_authors_route_is_not_shadowed_by_document_detail() -> None:
 def test_batch_export_matches_single_export_byte_for_byte(file_format: str) -> None:
     """批量导出的每个文件必须和「单篇导出」逐字节一致。
 
-    两条路径走的是同一份导出逻辑（含 txt / srt 的 BOM、字幕来源的一行一句），
-    谁单独改了另一条路径，这里就会对不上。所以两种来源各放一篇一起比。
+    两条路径走的是同一份导出逻辑（含 txt / srt 的 BOM），谁单独改了另一条路径，
+    这里就会对不上。一篇未整理（一行一句）、一篇整理过（段落之间空行）一起比，
+    把 paragraph_body 的两条分支都覆盖到。
     """
 
     init_database()
     with SessionLocal() as session:
         reset_documents(session)
         plain = seed(session, title="普通文案", uploader="牛老师")
-        subtitle = seed(session, title="字幕文案", uploader="牛老师")
-        link_subtitle_job(session, subtitle)
-        for document_id, text in ((plain, "第一句。第二句。"), (subtitle, "一行一句")):
-            session.add(
-                TranscriptSegment(
-                    document_id=document_id, position=0, text=text, raw_text=text
+        organized = seed(session, title="整理过的文案", uploader="牛老师")
+        plain_texts = ["第一句。", "第二句。"]
+        organized_texts = ["整理过的第一段。", "整理过的第二段。"]
+        for document_id, texts in ((plain, plain_texts), (organized, organized_texts)):
+            for position, text in enumerate(texts):
+                session.add(
+                    TranscriptSegment(
+                        document_id=document_id, position=position, text=text, raw_text=text
+                    )
                 )
-            )
+        organized_document = session.get(Document, organized)
+        assert organized_document is not None
+        organized_document.paragraph_body = True
         session.commit()
 
     with TestClient(app) as client:
@@ -271,8 +261,14 @@ def test_batch_export_matches_single_export_byte_for_byte(file_format: str) -> N
         assert bundle.status_code == 200
         assert bundle.headers["content-type"].startswith("application/zip")
         archive = zipfile.ZipFile(io.BytesIO(bundle.content))
-        assert sorted(archive.namelist()) == [f"字幕文案.{file_format}", f"普通文案.{file_format}"]
-        for document_id, name in ((plain, f"普通文案.{file_format}"), (subtitle, f"字幕文案.{file_format}")):
+        assert sorted(archive.namelist()) == [
+            f"整理过的文案.{file_format}",
+            f"普通文案.{file_format}",
+        ]
+        for document_id, name in (
+            (plain, f"普通文案.{file_format}"),
+            (organized, f"整理过的文案.{file_format}"),
+        ):
             single = client.get(
                 f"/api/documents/{document_id}/export", params={"format": file_format}
             )

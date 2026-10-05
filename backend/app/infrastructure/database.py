@@ -72,7 +72,7 @@ _LATER_COLUMNS: dict[str, dict[str, str]] = {
         # 带 DEFAULT 是必要的：老库补列时，SQLite 会用它填满已有行，
         # 否则历史文案的 source_kind 会是 NULL，接口校验直接失败。
         "source_kind": "VARCHAR(16) DEFAULT 'single'",
-        # 正文形态：0 = 字幕原样一行一句，1 = 智能分句整理过的自然段。
+        # 正文形态：0 = 一行一句，1 = 智能分句整理过的自然段（段落之间空行）。
         # 老库里的文案保持原有的逐行展示，所以默认 0。
         "paragraph_body": "BOOLEAN DEFAULT 0",
     },

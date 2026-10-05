@@ -121,31 +121,21 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
-  saveSegments: (id: string, segments: DocumentDetail['segments']) =>
-    request<DocumentDetail>(`/api/documents/${id}/segments`, {
+  /**
+   * 整篇正文保存：一行一条分段，空行表示段落之间空一行。
+   * 行数没变就地改字（时间码不动），行数变了按行重建（时间按字数比例分摊）。
+   */
+  saveBody: (id: string, text: string) =>
+    request<DocumentDetail>(`/api/documents/${id}/body`, {
       method: 'PUT',
-      body: JSON.stringify({
-        segments: segments.map((segment) => ({
-          id: segment.id,
-          position: segment.position,
-          start_ms: segment.start_ms,
-          end_ms: segment.end_ms,
-          text: segment.text,
-        })),
-      }),
+      body: JSON.stringify({ text }),
     }),
   deleteDocument: (id: string) =>
     request<{ id: string; removed: boolean }>(`/api/documents/${id}`, { method: 'DELETE' }),
-  /** 智能分句：把文案整理成带标点的自然段；结果只回给编辑框，用户确认后再保存。 */
+  /** 智能分句：整理成带标点的自然段并直接落库，返回整理后的文案。 */
   polish: (id: string) =>
     request<PolishedText>(`/api/documents/${id}/polish`, { method: 'POST' }),
-  /** 保存整理结果：按自然段重建分段（一段一条，时间按字数比例分摊）。 */
-  applyPolishedText: (id: string, text: string) =>
-    request<DocumentDetail>(`/api/documents/${id}/polish/apply`, {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    }),
-  /** 恢复原始字幕行：用识别原文重建「一行一句」的分段。 */
+  /** 恢复原始分段：用识别原文重建「一行一句」的分段。 */
   restoreLines: (id: string) =>
     request<DocumentDetail>(`/api/documents/${id}/restore-lines`, { method: 'POST' }),
   exportUrl: (id: string, format: 'txt' | 'srt' | 'vtt' | 'json') =>

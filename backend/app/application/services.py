@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session, selectinload
 from app.application.exporters import documents_as_zip
 from app.application.pagination import encode_cursor, fetch_page
 from app.application.platforms import detect_platform, extract_source_url
-from app.application.polishing import PolishedTranscript, polish_lines
-from app.application.text_formatting import reflow_segments
+from app.application.polishing import PolishedTranscript, looks_punctuated, polish_lines
+from app.application.text_formatting import join_paragraph, reflow_segments
 from app.config import settings
 from app.domain import EngineUnavailableError, JobStage, JobStatus, ModelEngine
 from app.infrastructure import punctuation
@@ -43,6 +43,9 @@ from app.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 段落之间的空行（含只有空白字符的行）
+_BLANK_LINE_RE = re.compile(r"\n[ \t]*\n")
 
 DEFAULT_SETTINGS = {
     "theme": "system",
@@ -680,16 +683,7 @@ def export_documents_bundle(
         raise DocumentExportError(
             f"一次最多导出 {MAX_EXPORT_DOCUMENTS} 篇，请按作者或平台分几次导出"
         )
-    # 哪些文档是字幕来源（关系正文的段落规则）：一次全查出来，不要每篇再查一次任务
-    subtitle_ids = set(
-        session.scalars(
-            select(Job.document_id).where(
-                Job.document_id.in_([document.id for document in documents]),
-                Job.transcript_source == "subtitle",
-            )
-        )
-    )
-    return documents_as_zip(documents, subtitle_ids=subtitle_ids, file_format=file_format)
+    return documents_as_zip(documents, file_format=file_format)
 
 
 def list_document_authors(
@@ -852,8 +846,8 @@ def replace_segments(
         for item in items
     )
     document.word_count = sum(len(item.text.strip()) for item in items)
-    # 按分段逐条保存，正文就回到「一条一行」的形态（段落形态由 apply_paragraph_text 维护）
-    document.paragraph_body = False
+    # 正文形态只由「智能分句」（整理成自然段）与「恢复原始分段」（退回一行一句）改，
+    # 保存动作不动它——否则整理过的文案编辑一下就悄悄退回一行一句。
     session.commit()
     return get_document(session, document.id) or document
 
@@ -891,60 +885,76 @@ def auto_format_segments(session: Session, document: Document) -> Document:
         for index, chunk in enumerate(chunks)
     )
     document.word_count = sum(len(chunk.text.strip()) for chunk in chunks)
+    # 重排成句级分段就是「一行一句」的形态
+    document.paragraph_body = False
     session.commit()
     return get_document(session, document.id) or document
-
-
-def is_subtitle_document(session: Session, document_id: str) -> bool:
-    """这条文案的正文是否来自平台字幕——决定正文用一行一句还是自然段。"""
-
-    return bool(
-        session.scalar(
-            select(Job.id)
-            .where(Job.document_id == document_id, Job.transcript_source == "subtitle")
-            .limit(1)
-        )
-    )
 
 
 def polish_document(session: Session, document: Document) -> PolishedTranscript:
     """智能分句：把文案整理成带标点的自然段。
 
-    只返回整理结果（给编辑框过目），不碰数据库里的分段——用户确认后再保存。
-    字幕文案没有标点，必须装了标点模型才能整理；识别结果自带标点，直接重新切句成段。
+    不分字幕还是识别，规则一致：合并滚动重复、正文没标点时用本地标点模型补标点、
+    切成句子再按句数/字数组织成自然段。返回的正文由调用方直接写成分段（一段一条）。
+    标点模型没装、正文又没有标点时，给一条可读提示而不是把没标点的正文原样返回。
     """
 
-    subtitle = is_subtitle_document(session, document.id)
     ordered = sorted(document.segments, key=lambda item: item.position)
     lines = [segment.text for segment in ordered]
 
-    punctuate = None
-    if subtitle:
-        if not punctuation.is_ready():
-            raise EngineUnavailableError(
-                "智能分句需要先安装「中文标点恢复」模型（设置 → 模型管理）"
-            )
-        punctuate = punctuation.add_punctuation
+    punctuate = punctuation.add_punctuation if punctuation.is_ready() else None
+    if punctuate is None and lines and not looks_punctuated(join_paragraph(lines)):
+        raise EngineUnavailableError(
+            "智能分句需要先安装「中文标点恢复」模型（设置 → 模型管理）"
+        )
 
-    return polish_lines(lines, subtitle=subtitle, punctuate=punctuate)
+    return polish_lines(lines, punctuate=punctuate)
 
 
-def apply_paragraph_text(session: Session, document: Document, text: str) -> Document:
-    """把整理好的正文按自然段写成段落级分段。
+def apply_body_text(
+    session: Session,
+    document: Document,
+    text: str,
+    *,
+    paragraphs: bool | None = None,
+) -> Document:
+    """把整篇正文写回分段：一行一条，空行只用来表示段落之间空一行。
 
-    一段 = 一个分段：这样「自然段」才真正存了下来——正文（编辑框、预览、复制、
-    导出）与时间轴从此都是段落形态，重新打开不会又变回一行一句。
+    行数没变（改错别字、调标点）时就地改字，分段 id、时间码与识别原文都不动；
+    行数变了（合并、拆行、增删）就按行重建分段，时间按字数比例分摊到原时间范围。
+    「智能分句」的整理结果也走这一条：它给出的正是整理后的整篇正文。
+
+    paragraphs 显式给了就用它（整理结果一定是段落形态）；没给就按正文里的空行判断——
+    有空行就是段落形态（空行是段落分隔符，段内的换行只作排版），没有空行就一行一句。
     """
 
-    blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
-    if not blocks:
+    organized = _BLANK_LINE_RE.search(text) is not None if paragraphs is None else paragraphs
+    if organized:
+        # 空行是段落分隔符：一段一条，段内的换行只是排版、不进正文
+        lines = [
+            "".join(block.split("\n")).strip()
+            for block in _BLANK_LINE_RE.split(text)
+            if block.strip()
+        ]
+    else:
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+    if not lines:
         raise ValueError("正文是空的，没有可保存的内容")
 
-    updated = _rebuild_segments(session, document, blocks)
-    # 分段现在就是自然段，正文按「段落之间空行」排版
-    updated.paragraph_body = True
+    ordered = sorted(document.segments, key=lambda item: item.position)
+    targets = [segment for segment in ordered if segment.text.strip()]
+    if len(lines) == len(targets) and targets:
+        for segment, line in zip(targets, lines, strict=True):
+            segment.text = line
+        session.commit()
+        updated = document
+    else:
+        updated = _rebuild_segments(session, document, lines)
+
+    updated.paragraph_body = organized
+    updated.word_count = sum(len(line) for line in lines)
     session.commit()
-    return updated
+    return get_document(session, updated.id) or updated
 
 
 def restore_line_segments(session: Session, document: Document) -> Document:

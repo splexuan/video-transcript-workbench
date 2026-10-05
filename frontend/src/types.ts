@@ -133,20 +133,15 @@ export interface DocumentDetail extends DocumentSummary {
   /** 来源作品介绍，通常比标题长；没有就是 null。 */
   description: string | null
   /**
-   * 文案来源：subtitle（平台字幕）或 asr（本地识别）。
-   * 字幕没有标点，全文视图整篇放在一个框里编辑，写回时按各行原始字数摊回字幕行。
-   */
-  transcript_source: 'subtitle' | 'asr' | null
-  /**
-   * 正文形态：false = 字幕原样一行一句，true = 智能分句整理过的自然段（段落之间空行）。
-   * 由保存正文的两个接口各自维护，前端据此决定正文怎么排版。
+   * 正文形态：false = 一行一句，true = 「智能分句」整理过的自然段（段落之间空行）。
+   * 一条分段就是一块正文，这个标记只决定段落之间是否空行。
    */
   paragraph_body: boolean
   /** 原始音轨是否还留在本机；false 时编辑页不渲染播放器。 */
   media_available: boolean
 }
 
-/** 智能分句的整理结果：只给编辑框过目，不落库。 */
+/** 智能分句的结果：整理后的分段已经落库，document 是可直接替换的新文案。 */
 export interface PolishedText {
   text: string
   /** 整理后的自然段数量与句子数量，用于界面上的说明文字。 */
@@ -154,8 +149,9 @@ export interface PolishedText {
   sentences: number
   /** 合并掉的滚动重复条目数；0 表示没有发现重复。 */
   merged: number
-  /** 是否调用了标点模型；识别结果自带标点时为 false。 */
+  /** 是否调用了标点模型；正文本来就带标点时为 false。 */
   punctuated: boolean
+  document: DocumentDetail
 }
 
 /**

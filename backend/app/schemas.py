@@ -183,9 +183,6 @@ class DocumentDetail(DocumentRead):
     segments: list[SegmentRead]
     # 来源作品介绍，通常比标题长，只在详情里给
     description: str | None = None
-    # 文案来源：subtitle（平台字幕）或 asr（本地识别）。字幕没有标点，前端据此
-    # 决定全文是「一行一句」还是合并成段落。
-    transcript_source: str | None = None
     # 原始音轨是否还留在本机（由设置里的「保留原始音视频」决定）；
     # 没保留时前端不渲染播放器，也不要去请求媒体接口。
     media_available: bool = False
@@ -201,8 +198,14 @@ class SegmentsReplace(BaseModel):
     segments: list[SegmentWrite]
 
 
+class BodyWrite(BaseModel):
+    """整篇正文：一行一条分段，段落之间以空行分隔（空行只作排版）。"""
+
+    text: str = Field(min_length=1, max_length=2_000_000)
+
+
 class PolishRead(BaseModel):
-    """智能分句的整理结果：只给编辑框过目，不落库。"""
+    """智能分句的结果：整理后的分段已经落库，附带新文案与界面说明用的统计。"""
 
     text: str
     # 整理后的自然段数量与句子数量，用于界面上的说明文字
@@ -210,14 +213,10 @@ class PolishRead(BaseModel):
     sentences: int
     # 合并掉的滚动重复条目数（0 表示没有发现重复）
     merged: int
-    # 是否调用了标点模型（识别结果自带标点时为 false）
+    # 是否调用了标点模型（正文本来就带标点时是 false）
     punctuated: bool
-
-
-class PolishApplyWrite(BaseModel):
-    """把整理好的正文（自然段）写成分段：一段一条。"""
-
-    text: str = Field(min_length=1, max_length=2_000_000)
+    # 整理直接写回后的文案：前端拿它替换当前文档，不用再走一遍保存
+    document: DocumentDetail
 
 
 class SettingPatch(BaseModel):

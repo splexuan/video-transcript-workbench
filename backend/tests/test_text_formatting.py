@@ -37,19 +37,22 @@ def test_split_sentences_fallback_for_unpunctuated_blob() -> None:
     assert all(len(item) >= 30 for item in sentences)
 
 
-def test_transcript_as_text_keeps_subtitles_line_by_line() -> None:
-    """字幕原样一行一句（条目的边界就是字幕边界），识别结果按停顿成段。"""
+def test_transcript_as_text_is_line_by_line_until_paragraphs() -> None:
+    """正文一条分段一块：未整理一行一句，整理过（paragraph_body）段落之间空行。"""
 
     segments = [
         (0, 1_000, "其实面对折叠手机"),
         (8_000, 9_000, "我们始终会有个绕不过的问题"),
     ]
 
-    assert transcript_as_text(segments) == "其实面对折叠手机\n\n我们始终会有个绕不过的问题"
-    assert transcript_as_text(segments, subtitle=True) == "其实面对折叠手机\n我们始终会有个绕不过的问题"
-    assert transcript_blocks(segments, subtitle=True) == ["其实面对折叠手机", "我们始终会有个绕不过的问题"]
+    assert transcript_as_text(segments) == "其实面对折叠手机\n我们始终会有个绕不过的问题"
+    assert (
+        transcript_as_text(segments, paragraphs=True)
+        == "其实面对折叠手机\n\n我们始终会有个绕不过的问题"
+    )
+    assert transcript_blocks(segments) == ["其实面对折叠手机", "我们始终会有个绕不过的问题"]
     # 空片段不占位置
-    assert transcript_as_text([(0, 1_000, "   "), (1_000, 2_000, "有内容")], subtitle=True) == "有内容"
+    assert transcript_as_text([(0, 1_000, "   "), (1_000, 2_000, "有内容")]) == "有内容"
 
 
 def test_reflow_segments_distributes_time_by_length() -> None:
@@ -89,10 +92,15 @@ def test_group_paragraphs_sentence_cap() -> None:
     assert sum(len(block) for block in paragraphs) == 10
 
 
-def test_transcript_as_text_joins_within_paragraph() -> None:
+def test_transcript_as_text_keeps_segment_boundaries() -> None:
+    """分段边界就是正文的行边界，不再按停顿合成自然段。"""
+
     segments = [(0, 1_000, "大家好。"), (1_000, 2_000, "今天聊导出。"), (5_000, 6_000, "第二段开始。")]
-    text = transcript_as_text(segments)
-    assert text == "大家好。今天聊导出。\n\n第二段开始。"
+    assert transcript_as_text(segments) == "大家好。\n今天聊导出。\n第二段开始。"
+    assert (
+        transcript_as_text(segments, paragraphs=True)
+        == "大家好。\n\n今天聊导出。\n\n第二段开始。"
+    )
 
 
 def _seed_document() -> str:
@@ -167,8 +175,13 @@ def test_auto_format_endpoint_and_txt_export() -> None:
         exported = client.get(f"/api/documents/{document_id}/export?format=txt")
         assert exported.status_code == 200
         text = exported.content.decode("utf-8-sig")
-        # 段内成句、段间空行：整段时间连续不会断段，应为单段
-        assert "大家好，欢迎收看本期节目。今天我们聊一聊导出设置！首先说码率。然后是色彩空间。" in text
+        # auto-format 只重排分段，不合成自然段：一行一句，没有空行
+        assert text == (
+            "大家好，欢迎收看本期节目。\n"
+            "今天我们聊一聊导出设置！\n"
+            "首先说码率。\n"
+            "然后是色彩空间。"
+        )
 
         payload = client.get(f"/api/documents/{document_id}/export?format=json").json()
         assert isinstance(payload["paragraphs"], list)

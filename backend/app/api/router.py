@@ -27,7 +27,7 @@ from app.application.services import (
     JobBatchIdempotencyConflict,
     JobBatchValidationError,
     JobRetryError,
-    apply_paragraph_text,
+    apply_body_text,
     auto_format_segments,
     cancel_job_batch,
     create_job,
@@ -38,7 +38,6 @@ from app.application.services import (
     find_document_media,
     get_document,
     get_job_batch,
-    is_subtitle_document,
     list_document_authors,
     list_document_titles,
     list_documents,
@@ -66,6 +65,7 @@ from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.models import Document, Job, JobBatch
 from app.schemas import (
     AuthorPage,
+    BodyWrite,
     DocumentDetail,
     DocumentRead,
     DocumentTitleRead,
@@ -78,7 +78,6 @@ from app.schemas import (
     JobCreate,
     JobRead,
     Page,
-    PolishApplyWrite,
     PolishRead,
     SegmentsReplace,
     SettingPatch,
@@ -437,15 +436,13 @@ def export_documents(
 
 
 def _document_detail(session: Session, document: Document) -> DocumentDetail:
-    """文档详情：附带来源作品元信息、文案来源与「原始音轨是否还在本机」。
+    """文档详情：附带来源作品元信息与「原始音轨是否还在本机」。
 
-    前端据此决定要不要渲染播放器，以及全文是合并成段落还是保持一行一句。
+    前端据此决定要不要渲染播放器；正文形态由 paragraph_body 决定。
     """
 
     payload = DocumentDetail.model_validate(document)
     payload.media_available = find_document_media(session, document.id) is not None
-    job = session.scalar(select(Job).where(Job.document_id == document.id))
-    payload.transcript_source = job.transcript_source if job else None
     return payload
 
 
@@ -501,6 +498,27 @@ def save_segments(
     return _document_detail(session, replace_segments(session, document, payload.segments))
 
 
+@router.put("/documents/{document_id}/body", response_model=DocumentDetail)
+def save_body(
+    document_id: str,
+    payload: BodyWrite,
+    session: SessionDep,
+) -> DocumentDetail:
+    """整篇正文保存：一行一条分段，行数变了就按行重建（时间按字数比例分摊）。
+
+    编辑页整篇框与「智能分句」都走这一条；行数没变时就地改字，时间码完全不动。
+    """
+
+    document = get_document(session, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    try:
+        updated = apply_body_text(session, document, payload.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _document_detail(session, updated)
+
+
 @router.post("/documents/{document_id}/auto-format", response_model=DocumentDetail)
 def auto_format(document_id: str, session: SessionDep) -> DocumentDetail:
     """把段落/长句文本重排为句级分段，便于逐句校对。"""
@@ -515,10 +533,10 @@ def auto_format(document_id: str, session: SessionDep) -> DocumentDetail:
 
 @router.post("/documents/{document_id}/polish", response_model=PolishRead)
 def polish(document_id: str, session: SessionDep) -> PolishRead:
-    """智能分句：把文案整理成带标点的自然段。
+    """智能分句：把文案整理成带标点的自然段，并直接把结果写回分段。
 
-    结果只回给前端填进编辑框，不落库——用户过目、改完再保存。
-    字幕文案需要先装好标点模型，未安装时给一条可读的提示。
+    一次请求即生效——切句、合并滚动重复、按需补标点，然后一段一条落库，
+    返回新文案给前端替换。正文没有标点又没装标点模型时给一条可读的提示。
     """
 
     document = get_document(session, document_id)
@@ -528,36 +546,20 @@ def polish(document_id: str, session: SessionDep) -> PolishRead:
         raise HTTPException(status_code=400, detail="文案还没有可整理的内容")
     try:
         result = polish_document(session, document)
+        # 整理结果一定是段落形态，即便只有一段
+        updated = apply_body_text(session, document, result.text, paragraphs=True)
     except EngineUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return PolishRead(
         text=result.text,
-        paragraphs=len([block for block in result.text.split("\n\n") if block.strip()]),
+        paragraphs=len(updated.segments),
         sentences=result.sentences,
         merged=result.merged,
         punctuated=result.punctuated,
+        document=_document_detail(session, updated),
     )
-
-
-@router.post("/documents/{document_id}/polish/apply", response_model=DocumentDetail)
-def apply_polish(
-    document_id: str,
-    payload: PolishApplyWrite,
-    session: SessionDep,
-) -> DocumentDetail:
-    """把整理好的正文写成分段：一段一条，段落时间按字数比例分摊。
-
-    这样自然段才真正存下来——正文与时间轴都是段落形态，重新打开不会又变回一行一句。
-    """
-
-    document = get_document(session, document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail="文案不存在")
-    try:
-        updated = apply_paragraph_text(session, document, payload.text)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _document_detail(session, updated)
 
 
 @router.post("/documents/{document_id}/restore-lines", response_model=DocumentDetail)
@@ -612,13 +614,11 @@ def download_export(
     document = get_document(session, document_id)
     if not document:
         raise HTTPException(status_code=404, detail="文案不存在")
-    # 与编辑页、预览同一份正文规则（字幕一行一句；整理过的字幕段落之间空行）
-    subtitle = is_subtitle_document(session, document_id)
+    # 与编辑页、预览同一份正文规则（一行一句；整理过的段落之间空行）
     try:
         content, media_type, extension = export_document(
             document,
             file_format,
-            subtitle=subtitle,
             paragraphs=document.paragraph_body,
         )
     except ValueError as exc:

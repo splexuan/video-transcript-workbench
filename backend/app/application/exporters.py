@@ -27,13 +27,12 @@ def export_document(
     document: Document,
     file_format: str,
     *,
-    subtitle: bool = False,
     paragraphs: bool = False,
 ) -> tuple[str, str, str]:
     """导出文档。
 
-    subtitle / paragraphs 描述正文形态（documents.paragraph_body），与编辑页、预览
-    同一份规则（见 transcript_as_text）：字幕未整理时一行一句，整理过的字幕按自然段。
+    paragraphs 即 documents.paragraph_body：与编辑页、预览共用同一份正文规则
+    （见 transcript_as_text）——一条分段一块，整理过的一段之间空一行。
     srt / vtt 是字幕文件格式，始终按分段逐条输出。
     """
 
@@ -41,10 +40,8 @@ def export_document(
     safe_format = file_format.lower()
 
     if safe_format == "txt":
-        # 与编辑页看到的一致：段内直接相接、段落之间空行，不额外补标点
-        content = transcript_as_text(
-            _segment_tuples(document), subtitle=subtitle, paragraphs=paragraphs
-        )
+        # 与编辑页看到的一致：不额外补标点，整理过则段落之间空行
+        content = transcript_as_text(_segment_tuples(document), paragraphs=paragraphs)
         return content, "text/plain; charset=utf-8", "txt"
 
     if safe_format == "srt":
@@ -71,7 +68,7 @@ def export_document(
             "source": document.source_value,
             "duration_seconds": document.duration_seconds,
             # 与 txt 导出、编辑页同一份正文
-            "paragraphs": transcript_blocks(_segment_tuples(document), subtitle=subtitle),
+            "paragraphs": transcript_blocks(_segment_tuples(document)),
             "segments": [
                 {
                     "position": segment.position,
@@ -91,7 +88,6 @@ def export_document(
 def documents_as_zip(
     documents: Sequence[Document],
     *,
-    subtitle_ids: set[str],
     file_format: str,
 ) -> bytes:
     """把多篇文案打成一个 zip：每篇一个文件，内容与单篇导出逐字节一致。
@@ -107,7 +103,6 @@ def documents_as_zip(
             content, _, extension = export_document(
                 document,
                 file_format,
-                subtitle=document.id in subtitle_ids,
                 paragraphs=document.paragraph_body,
             )
             data = (

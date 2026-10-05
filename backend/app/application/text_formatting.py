@@ -1,10 +1,11 @@
-"""文案自动整理：切句、时间轴细分与段落分组。
+"""文案正文与时间轴的规则式整理（不用任何网络服务）。
 
-规则式处理（不用任何网络服务）：
 - 切句：按中英标点把长文本切成一句一条，适合逐句校对；
 - 时间轴：句内时间按字数比例分配，仅用于快速定位，不代表真实停顿；
-- 分段：把分段组织成可读段落，用于「文案正文」的所有出口（编辑页、预览、
-  复制全文、AI 总结、txt / json 导出），见 transcript_as_text。
+- 正文：一条分段就是一块，段落之间是否空行由 documents.paragraph_body 决定
+  （见 transcript_as_text）；「智能分句」把长文重排成自然段，一段一条。
+
+不分字幕还是识别：分段既是时间轴的行，也是正文的段，各出口共用这一份拼装。
 """
 
 from __future__ import annotations
@@ -12,19 +13,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# 识别来源的段落分组参数：超过任一阈值就另起一段
+# 「智能分句」组装自然段时用的阈值：超过任一条件就另起一段
 PARAGRAPH_GAP_MS = 1_600
 PARAGRAPH_MAX_SENTENCES = 5
 PARAGRAPH_MAX_CHARS = 180
 
-# 字幕（平台字幕）不做任何分段加工：字幕本身就是「一行一句」，条目与时间一一对应，
-# 按字数合成段落只会让空行落在词中间。展示、复制、导出都按原样逐行给出；
-# 需要标点与自然段时走「智能分句」（见 services.auto_format_segments）。
-#
-# 说明：曾经尝试过「按停顿给字幕补标点」，实测后放弃了。
-# B站 AI 字幕整段没有标点，而且时间戳首尾相连（上一条的结束就是下一条的开始），
-# 停顿间隔恒为 0，条目边界也和语义无关（可能切在词中间）。规则补标点必然出现
-# 「逗号出现在随机位置」的结果，得不偿失。
+# 正文不做任何隐式分段：一条分段就是一行，段落形态只由「智能分句」重建后记录在
+# documents.paragraph_body 上。曾经尝试过在展示时按停顿给正文合成自然段，实测后
+# 放弃了——B站 AI 字幕时间戳首尾相连（停顿恒为 0），条目边界也和语义无关（可能
+# 切在词中间），合成出来的空行只会落在词中间。要标点与自然段就走「智能分句」。
 
 # 无强标点的超长文本，按逗号兜底切分的目标长度
 CLAUSE_FALLBACK_LENGTH = 120
@@ -216,40 +213,24 @@ def join_paragraph(sentences: list[str]) -> str:
 
 def transcript_blocks(
     segments: list[tuple[int | None, int | None, str]],
-    *,
-    subtitle: bool = False,
 ) -> list[str]:
-    """文案正文的「块」：字幕来源一块 = 一条分段，识别来源一块 = 一个自然段。
+    """文案正文的「块」：一条分段就是一块。
 
-    编辑页、预览弹窗、复制全文、AI 总结、txt / json 导出都用它，保证同一篇文案在
-    任何出口拿到的都是同一份文字。
-
-    字幕的块边界就是分段边界：智能分句整理过的字幕，分段本身就是自然段，
-    所以这里不用再区分——正文形态由分段和 paragraph_body 一起决定。
+    不分字幕还是识别——分段本身既是时间轴的行，也是正文的段。编辑页、预览弹窗、
+    复制全文、AI 总结、txt / json 导出都用它，保证同一篇文案在任何出口都是同一份文字。
     """
 
-    if subtitle:
-        return [text.strip() for _, _, text in segments if text.strip()]
-
-    blocks: list[str] = []
-    for paragraph in group_paragraphs(segments):
-        joined = join_paragraph(paragraph).strip()
-        if joined:
-            blocks.append(joined)
-    return blocks
+    return [text.strip() for _, _, text in segments if text.strip()]
 
 
 def transcript_as_text(
     segments: list[tuple[int | None, int | None, str]],
     *,
-    subtitle: bool = False,
     paragraphs: bool = False,
 ) -> str:
-    """文案正文：整理过的字幕与识别结果段落之间空一行，未整理的字幕一行一句。
+    """文案正文：paragraphs（documents.paragraph_body）为真时段落之间空一行。
 
-    paragraphs 即 documents.paragraph_body：字幕整理成自然段后，段落之间要有空行，
-    否则每段一行挤在一起，看着还是「一行一句」。
+    未整理时一行一句；「智能分句」整理后一段 = 一个分段，段落之间空行。
     """
 
-    joined = transcript_blocks(segments, subtitle=subtitle)
-    return ("\n\n" if paragraphs or not subtitle else "\n").join(joined)
+    return ("\n\n" if paragraphs else "\n").join(transcript_blocks(segments))

@@ -69,15 +69,9 @@ export function DocumentPreviewModal({
   // Esc 关闭 + 弹窗期间锁住背景滚动，两条都由 useModalDismiss 统一处理
   useModalDismiss(true, requestClose)
 
-  /** 预览里的正文：与编辑页、导出共用同一套拼装（字幕一行一句或自然段，识别看停顿）。 */
+  /** 预览里的正文：与编辑页、导出共用同一套拼装（一行一句；整理过段落之间空行）。 */
   function plainText(): string {
-    return detail
-      ? transcriptAsText(
-        detail.segments,
-        detail.transcript_source === 'subtitle',
-        detail.paragraph_body,
-      )
-      : ''
+    return detail ? transcriptAsText(detail.segments, detail.paragraph_body) : ''
   }
 
   async function copy() {
@@ -160,7 +154,7 @@ export function DocumentPreviewModal({
               {detail.segments.length === 0 ? (
                 <p className="compact-empty">这条文案还没有内容。</p>
               ) : (
-                transcriptBlocks(detail.segments, detail.transcript_source === 'subtitle').map(
+                transcriptBlocks(detail.segments).map(
                   (block, index) => <p key={index}>{block}</p>,
                 )
               )}

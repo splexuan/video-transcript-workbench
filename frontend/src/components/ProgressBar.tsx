@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react'
+
 /**
  * 统一的进度条。全应用只此一处渲染进度：
  * 之前 5 个页面各写一遍 markup，且只有 3 处带 role / aria-valuenow，
@@ -27,7 +29,12 @@ export function ProgressBar({
       aria-valuenow={percent}
       aria-valuetext={`${percent}%`}
     >
-      <span style={{ width: `${width}%` }} />
+      {/*
+        只往 CSS 传一个 0~1 的比例，平移量交给样式算。
+        进度是每帧都在改的值，走 transform 只触发合成，不会让轨道反复重排；
+        轨道自身 overflow: hidden，填充左移之后右端的圆角仍是圆的。
+      */}
+      <span style={{ '--p': width / 100 } as CSSProperties} />
     </div>
   )
 }

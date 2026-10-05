@@ -223,7 +223,13 @@ export function AppShell() {
         </div>
       </aside>
       <main className="main-content" id="main-content">
-        <Outlet />
+        {/*
+          key 用 pathname：换页时整块重新挂载，CSS 入场动画才会重跑一遍。
+          没有它路由切换是硬替换，从长列表切到短页面会「闪」一下。
+        */}
+        <div className="page-transition" key={pathname}>
+          <Outlet />
+        </div>
       </main>
     </div>
   )

@@ -5,17 +5,22 @@
    ========================================================================== */
 
 :root {
-  /* 暖色中性阶：底色比卡片深两档，让白色面板「坐」在纸上而不是飘着 */
-  --bg: #f0eae0;
+  /*
+   * 暖色中性阶：底色从「深两档」收到「深半档」。
+   * 原来是暖纸底(#f0eae0) 对白卡片(#ffffff) 的 6% 明度差，
+   * 一屏里白卡片 + 浅色提示条 + 边框 + 阴影叠起来会发脏；收窄对比后才安静。
+   */
+  --bg: #f3efe7;
   --surface: #ffffff;
-  --surface-subtle: #f8f4ec;
-  --surface-hover: #ebe4d7;
-  --sidebar: #faf7f1;
+  --surface-subtle: #faf7f2;
+  --surface-hover: #f1ece2;
+  --sidebar: #faf8f3;
   --text: #221d17;
   --text-secondary: #5b4f43;
   --text-muted: #706356;
-  --border: #ddd2c1;
-  --border-strong: #c9bba6;
+  /* 边框降一档：分隔主要交给留白和阴影，边框只做「有边界」的暗示 */
+  --border: #e3dbcd;
+  --border-strong: #cdc1af;
 
   /* 主色：陶土（深一档，保证白字对比度达到 5:1 以上） */
   --primary: #a9502e;
@@ -42,8 +47,10 @@
 
   --success: #4a7c59;
   --success-soft: #e8f1e9;
-  --warning: #a9772a;
-  --warning-soft: #fbf0dc;
+  /* 警示色降一档饱和：原来的 #a9772a 配 #fbf0dc 只有 3.6:1，既刺眼又不够清楚；
+     前景加深、背景去掉那层黄之后约 4.3:1，一屏里也不再和黄底抢注意力 */
+  --warning: #96682a;
+  --warning-soft: #f8f1e2;
   --danger: #b3453c;
   --danger-soft: #fbeae7;
   /* 红色底上的文字：浅色下红够深，配白字；暗色下红变亮，改用深色字 */
@@ -59,11 +66,12 @@
   --text-base: 16px;
   --text-lg: 18px;
   --text-xl: 22px;
-  --text-2xl: 28px;
-  --text-3xl: 36px;
+  /* 页标题与 hero 各收一档：36px 的中文标题放在 1440 宽的页里像在「喊」 */
+  --text-2xl: 26px;
+  --text-3xl: 32px;
 
   /* 行高：界面收紧一档，正文与编辑区阅读行高保持宽松 */
-  --leading-tight: 1.3;
+  --leading-tight: 1.25;
   --leading-snug: 1.45;
   --leading-normal: 1.55;
   --leading-relaxed: 1.85;
@@ -80,10 +88,18 @@
   --radius-lg: 14px;
   --radius-pill: 999px;
 
-  /* 阴影收紧：小范围贴地阴影，去掉大面积光晕（光晕是「轻飘感」的来源） */
-  --shadow-sm: 0 1px 2px rgba(62, 46, 27, 0.08), 0 2px 6px rgba(62, 46, 27, 0.05);
-  --shadow-md: 0 6px 18px rgba(62, 46, 27, 0.13), 0 2px 6px rgba(62, 46, 27, 0.07);
+  /*
+   * 阴影只留一层、更淡：原先 sm 是「2px + 6px」两层，
+   * 白卡片上叠两层等于给每个盒子描了一圈脏雾。
+   */
+  --shadow-sm: 0 1px 2px rgba(62, 46, 27, 0.05);
+  --shadow-md: 0 10px 28px rgba(62, 46, 27, 0.12), 0 2px 6px rgba(62, 46, 27, 0.06);
+  /* 悬浮：列表行 / 可点卡片抬起 1px 时用，比 shadow-sm 略深一点点就够 */
+  --shadow-lift: 0 4px 12px rgba(62, 46, 27, 0.09);
   --focus-ring: 0 0 0 3px rgba(184, 92, 56, 0.18);
+  /* 弹窗压暗层：遮罩本体和「画布底色的压暗」共用这一个值，
+     两处必须完全一致，否则视口最右侧那条滚动条槽位会露出一条亮边 */
+  --scrim: rgba(34, 29, 23, 0.45);
 
   /* 控件尺寸 */
   --control-sm: 34px;
@@ -118,12 +134,29 @@
     "Noto Sans SC", "HarmonyOS Sans SC", "MiSans", "OPPO Sans",
     "Source Han Sans SC", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
-  --font-serif:
-    "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", SimSun, Georgia, serif;
   --font-mono:
     "JetBrains Mono", "Cascadia Mono", Consolas, "SF Mono", Monaco, monospace;
-  --ease: 160ms ease;
 
+  /*
+   * 动效分三档：位移要「快出」，颜色可以稍慢，小控件回弹再单独一档。
+   * 原先全站只有一个 `160ms ease`，进出场、悬停、聚焦同速同曲线，
+   * 读起来是匀速滑动、没有主次；分档之后动作才有前后轻重。
+   */
+  --dur-instant: 90ms;
+  --dur-fast: 140ms;
+  --dur-base: 200ms;
+  --dur-slow: 280ms;
+  /* 出场 / 位移：起步快、收尾慢，最接近「被手带动」的手感 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* 颜色 / 背景：两端对称，大面积变色不会突然收住 */
+  --ease-color: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 小面积元素回弹：图标切换、开关滑块 */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* 旧引用兼容：--ease 仍是「时长 + 缓动」的完整值，替换这一处即可全站升级 */
+  --ease: var(--dur-fast) var(--ease-out);
+
+  /* 原生控件（滚动条、下拉、日期选择器）跟着主题走，否则浅色下会冒出深色滚动条 */
+  color-scheme: light;
   font-family: var(--font-sans);
   font-size: var(--text-md);
   line-height: var(--leading-normal);
@@ -134,16 +167,17 @@
 }
 
 :root[data-theme="dark"] {
-  --bg: #17140f;
+  /* 与浅色同样收窄「底 vs 面」的明度差：深色下对比过强会让每个卡片都像贴上去的 */
+  --bg: #191712;
   --surface: #242019;
   --surface-subtle: #2b2620;
-  --surface-hover: #352f27;
+  --surface-hover: #332e26;
   --sidebar: #1e1a15;
   --text: #f4efe8;
   --text-secondary: #c3b8aa;
   --text-muted: #94887a;
-  --border: #3f372d;
-  --border-strong: #52473a;
+  --border: #38322a;
+  --border-strong: #4a4136;
 
   --primary: #e08a5f;
   --primary-hover: #efa078;
@@ -169,10 +203,12 @@
   --danger-soft: #3c2622;
   --on-danger: #241a14;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32), 0 2px 6px rgba(0, 0, 0, 0.22);
-  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.26);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.28);
+  --shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.3);
   --focus-ring: 0 0 0 3px rgba(224, 138, 95, 0.26);
 
+  color-scheme: dark;
   color: var(--text);
   background: var(--bg);
 }
@@ -301,10 +337,9 @@ button:disabled {
 }
 .brand strong {
   display: block;
-  font-family: var(--font-serif);
   font-size: var(--text-lg);
   font-weight: var(--weight-strong);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 .brand small {
   display: block;
@@ -433,16 +468,25 @@ button:disabled {
 
 .modal-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  /*
+   * 用 100vw / 100vh 而不是 inset: 0：遮罩要按「视口」定尺，不是按内容区。
+   * 两者平时相等；一旦内容区比视口窄（视口里留了滚动条槽位），
+   * 遮罩就会少盖一条边、居中的弹窗也会跟着偏。
+   */
+  width: 100vw;
+  height: 100vh;
   z-index: 50;
   display: grid;
   place-items: center;
-  /* 遮罩是 fixed + inset:0，视口一变宽它就跟着变宽，居中的弹窗于是右移半格。
-     右边多补同样的宽度，弹窗中心点才和锁滚动之前一致。 */
+  overflow: hidden;
+  /* 视口一变宽遮罩就跟着变宽，居中的弹窗会右移半格；
+     右边多补一截同样的宽度，弹窗中心点才和锁滚动之前一致。 */
   --overlay-padding: 32px;
   padding: var(--overlay-padding);
   padding-right: calc(var(--overlay-padding) + var(--scroll-lock-gap, 0px));
-  background: rgba(34, 29, 23, 0.45);
+  background: var(--scrim);
   animation: modal-fade var(--ease);
   /* 退场比进场轻：150ms 淡出即可，位移只给一点点方向感 */
   transition-property: opacity;
@@ -613,11 +657,11 @@ button:disabled {
 .hero-header {
   align-items: flex-end;
 }
+/* hero 标题也走无衬线：中文衬线在 Windows 上多半落到思源宋体/宋体，
+   和全无衬线的界面混搭会显旧，也压不住「顺滑」的观感 */
 .hero-header h1 {
-  font-family: var(--font-serif);
   font-size: var(--text-3xl);
   font-weight: var(--weight-strong);
-  letter-spacing: 0.01em;
 }
 .hero-header p {
   font-size: var(--text-md);
@@ -874,17 +918,62 @@ button:disabled {
   gap: 16px;
   margin-top: 18px;
 }
-/* 模型选择：直接列出可用模型及其体积/时间轴粒度，选中的就是实际用来识别的那个 */
+/* 模型选择：列出可用模型及其体积/时间轴粒度，选中的就是实际用来识别的那个 */
 .model-picker {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
+/*
+ * 折叠触发器在所有宽度下都保留。
+ * 之前宽屏的写法是把 summary 藏起来、指望 .model-picker 直接平铺，
+ * 但闭合的 <details> 压根不绘制 summary 以外的子元素——display 覆盖不了这个机制。
+ * 结果模型选择器在桌面宽度下完全点不开：实测 .model-picker 的计算 display 是 flex，
+ * 盒子却是 0×355，四个模型按钮一个都不画。现在统一成一处折叠面板，宽窄屏一致。
+ */
+.model-picker-disclosure {
+  /* 占满剩余宽度：左边一整行「识别模型 / 当前模型 / 更换」，右边留给导入按钮 */
+  flex: 1 1 260px;
+  min-width: 0;
+}
 .model-picker-disclosure > summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  min-height: 58px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  cursor: pointer;
+  list-style: none;
+  transition: border-color var(--ease), background-color var(--ease);
+}
+.model-picker-disclosure > summary:hover {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+.model-picker-disclosure > summary::-webkit-details-marker {
   display: none;
 }
-.model-picker-disclosure:not([open]) > .model-picker {
-  display: flex;
+.model-picker-disclosure > summary span,
+.model-picker-disclosure > summary small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.model-picker-disclosure > summary strong {
+  grid-row: 2;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.model-picker-disclosure > summary small {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--primary);
+}
+.model-picker-disclosure[open] > .model-picker {
+  margin-top: 8px;
 }
 .model-option {
   display: grid;
@@ -1101,26 +1190,30 @@ button:disabled {
   to { background-position-x: -220%; }
 }
 
+/*
+ * 空态不再画虚线框：虚线框本来是「占位」的意思，一多就变成每个卡片里
+ * 又套一个盒子，视觉噪音翻倍。改成只留两行字，靠居中留白撑住高度。
+ */
 .compact-empty {
   display: grid;
   place-items: center;
-  min-height: 160px;
-  padding: 24px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
+  min-height: 132px;
+  padding: 20px 16px;
   color: var(--text-muted);
   text-align: center;
 }
 .compact-empty span {
   align-self: end;
   color: var(--text-secondary);
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
 }
 .compact-empty p {
   align-self: start;
+  max-width: 32ch;
   margin: 8px 0 0;
   font-size: var(--text-xs);
+  line-height: var(--leading-snug);
 }
 
 .document-list,
@@ -1140,8 +1233,10 @@ button:disabled {
 .document-row:last-child {
   border-bottom: 0;
 }
+/* 悬停用比 subtle 深一档的色：底色整体收窄之后，subtle 那档几乎看不出变化，
+   指针扫过会像没反应 */
 .document-row:hover {
-  background: var(--surface-subtle);
+  background: var(--surface-hover);
 }
 /* 工作台右栏比文案库窄，封面对应收窄，比例仍是 16:9 */
 .document-row .cover-thumb {
@@ -1655,7 +1750,8 @@ span.task-exec-cover {
   border-bottom: 0;
 }
 .library-row:hover {
-  background: var(--surface-subtle);
+  /* 同上：底色收窄后 subtle 那档几乎看不出变化，悬停改用深一档的 hover */
+  background: var(--surface-hover);
 }
 .title-cell {
   display: flex;
@@ -1822,7 +1918,11 @@ span.task-exec-cover {
   font-size: var(--text-xs);
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--ease), background-color var(--ease);
+  transition:
+    border-color var(--ease),
+    background-color var(--ease),
+    box-shadow var(--ease),
+    translate var(--ease);
 }
 .author-card strong {
   overflow: hidden;
@@ -1835,6 +1935,10 @@ span.task-exec-cover {
 .author-card:hover {
   border-color: var(--primary);
   background: var(--surface-subtle);
+  /* 弹窗网格里的独立小卡片：抬起 1px 加一层浅投影，
+     比只换边框色更像「按得动」；列表行不这么处理，位移会把行间分隔线扯开 */
+  translate: 0 -1px;
+  box-shadow: var(--shadow-lift);
 }
 .author-card:focus-visible {
   outline: 2px solid var(--primary);
@@ -2106,7 +2210,8 @@ span.task-exec-cover {
   transition: background-color var(--ease), box-shadow var(--ease);
 }
 .job-card:hover {
-  background: var(--surface-subtle);
+  /* 底色收窄后 subtle 那档几乎看不出变化；左侧那道竖条保留，它是「当前这一行」的指示 */
+  background: var(--surface-hover);
   box-shadow: inset 3px 0 0 var(--border-strong);
 }
 /* 识别完的任务整行可点（直接打开预览），键盘也能聚焦到；悬停反馈上面这条已有 */
@@ -2200,10 +2305,14 @@ span.task-exec-cover {
 }
 .progress-track span {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: inherit;
   background: var(--primary);
-  transition: width 240ms ease;
+  /* 位移量来自 ProgressBar 写入的 --p（0~1）。轨道是 overflow: hidden，
+     填充整体左移后只有右端留在视野里，圆角因此不会被横向压扁。 */
+  transform: translateX(calc((var(--p, 0) - 1) * 100%));
+  transition: transform var(--dur-base) var(--ease-out);
 }
 .job-card-foot {
   align-items: center;
@@ -2726,17 +2835,19 @@ span.task-exec-cover {
 
 .settings-layout {
   display: grid;
-  gap: 18px;
+  gap: var(--space-xl);
   max-width: 820px;
 }
 .settings-section {
-  padding: 26px;
+  /* 左右比上下更宽一档：这一页全是「一行说明 + 一个控件」，
+     行两侧的留白就是分组感本身，比多加一条分隔线更省事 */
+  padding: var(--space-2xl) var(--space-3xl);
 }
 .settings-heading {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-xl);
 }
 .settings-heading > span {
   display: grid;
@@ -3670,8 +3781,10 @@ button.timecode:hover:not(:disabled) {
 .filter-chip,
 .source-copy {
   transition-property: color, background-color, border-color, box-shadow, opacity, scale;
-  transition-duration: 160ms;
-  transition-timing-function: ease;
+  /* 控件手感统一走「快出」曲线与 --dur-fast：颜色和缩放同步收尾，
+     松手时按压的 0.96 才是弹回去的，而不是慢慢缩回来 */
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
 }
 .primary-button:active:not(:disabled),
 .secondary-button:active:not(:disabled),
@@ -3702,8 +3815,9 @@ button.timecode:hover:not(:disabled) {
 .icon-swap > * {
   grid-area: 1 / 1;
   transition-property: scale, opacity, filter;
-  transition-duration: 300ms;
-  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  transition-duration: var(--dur-slow);
+  /* 回弹曲线：图标从 0.25 弹到 1 时会轻微过冲一下，切换主题的动作因此有了「落点」 */
+  transition-timing-function: var(--ease-spring);
 }
 .icon-swap > .is-off {
   scale: 0.25;
@@ -3881,23 +3995,29 @@ button.timecode:hover:not(:disabled) {
    所以整列吸顶并自己滚动 */
 .workbench-aside {
   position: sticky;
-  top: var(--space-xl);
+  /* 和 .page 的上内边距（32px）对齐：原先写 20px，粘住时比页头矮一截，看着像没对齐 */
+  top: var(--space-3xl);
   display: grid;
   gap: var(--space-xl);
   align-content: start;
-  max-height: calc(100vh - var(--space-3xl));
+  max-height: calc(100vh - var(--space-3xl) * 2);
   overflow-y: auto;
+  /* 恒定预留滚动条槽位：右栏从「不用滚」变成「要滚」时，卡片不会横向缩一下。
+     右边留一点内边距，滑块也不会压在卡片边框上 */
+  padding-right: var(--space-2xs);
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 /* 工作台表单里的「识别设置」分组：把模型、导入、平台字幕收进同一块，
-   并用一句话说明当前实际会怎么跑 */
+   并用一句话说明当前实际会怎么跑。
+   去掉描边：它自己已经有浅色底，再描一圈就和卡片边框叠成双层轮廓 */
 .capture-settings {
   display: grid;
   gap: var(--space-md);
   margin-top: var(--space-lg);
   padding: var(--space-lg);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-subtle);
 }
@@ -3923,6 +4043,8 @@ button.timecode:hover:not(:disabled) {
 }
 .capture-settings .subtitle-toggle {
   margin-top: 0;
+  /* 分组已经有浅色底，里面这块不再描边：白色块自己就能浮起来 */
+  border: 0;
   background: var(--surface);
 }
 .capture-settings .capture-hint {
@@ -4182,42 +4304,9 @@ button.timecode:hover:not(:disabled) {
     align-items: flex-start;
     flex-direction: column;
   }
+  /* 窄屏只改「怎么排」：折叠样式全部沿用基础层，模型卡片改成一行一个 */
   .model-picker-disclosure {
     width: 100%;
-  }
-  .model-picker-disclosure > summary {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 4px 12px;
-    min-height: 58px;
-    padding: 9px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface-subtle);
-    cursor: pointer;
-    list-style: none;
-  }
-  .model-picker-disclosure > summary::-webkit-details-marker {
-    display: none;
-  }
-  .model-picker-disclosure > summary span,
-  .model-picker-disclosure > summary small {
-    color: var(--text-muted);
-    font-size: var(--text-2xs);
-  }
-  .model-picker-disclosure > summary strong {
-    grid-row: 2;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-  }
-  .model-picker-disclosure > summary small {
-    grid-column: 2;
-    grid-row: 1 / 3;
-    align-self: center;
-    color: var(--primary);
-  }
-  .model-picker-disclosure:not([open]) > .model-picker {
-    display: none;
   }
   .model-picker-disclosure[open] > .model-picker {
     display: grid;
@@ -4555,6 +4644,122 @@ button.timecode:hover:not(:disabled) {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    /* 错峰入场的延迟也必须清零：只把时长压到 0.01ms 的话，
+       带 delay 的元素会先消失最多 216ms 再突然出现，比不做动画更差 */
+    animation-delay: 0s !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* ==========================================================================
+   全局手感层：滚动条 / 切页入场 / 列表错峰
+   单独成节放在文件末尾：这三类规则都是跨页面通用的，
+   和上面按页面排的样式分开，日后改动不会互相踩。
+   ========================================================================== */
+
+/* ---------- 滚动条：全站统一成细条 ---------- */
+/*
+ * Windows 默认滚动条 15px 宽、带箭头和立体底纹，和这套扁平的暖色界面不搭，
+ * 也是「看着不精致」里最容易被忽略的一处。
+ */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+/*
+ * 这里刻意不写 `scrollbar-gutter: stable`。
+ * 它的收益是「从长列表切到短页面时内容不横向抖一下」，代价却很硬：
+ * 视口里会恒定留一条 10px 的槽位，而那条槽位只有画布会画
+ * （实测：1418 宽的视口上内容区只有 1408，槽位像素色正好是 --bg，
+ * 且槽位只吃根元素的背景色、不吃背景图，没法靠叠一层压暗补上），
+ * 于是弹窗打开时右边必然露一条没被压暗的亮边。
+ * 与其用一个必然露馅的补丁，不如不要槽位：遮罩能盖满整屏，
+ * 而切页时那 10px 的位移在新旧内容交替的瞬间几乎看不出来。
+ */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  /* 3px 透明边框 + background-clip 把可见滑块收窄到 6px：
+     看着细，可点击区域仍是 12px，抓着不费劲 */
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  background-clip: content-box;
+}
+
+/* 关掉滚动链：子容器滚到底不会继续带动整页（触控板边缘滑动很常见） */
+body {
+  overscroll-behavior: none;
+}
+
+/* ---------- 切页入场 ---------- */
+/* 位移只给 8px、时长 280ms：够说明「换页了」，又不至于让人等它演完 */
+.page-transition {
+  animation: page-in var(--dur-slow) var(--ease-out) both;
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* ---------- 列表错峰入场 ---------- */
+/*
+ * 只给「数据回来之后才出现」的列表做错峰：工作台右栏的最近文案、任务队列的卡片。
+ * 用 nth-child 直接排在行上，不必让每个页面再往 JSX 里塞序号——这两个行类名本身就唯一。
+ * 延迟封顶 8 项（最晚 128ms）：再多也看不出错峰，只会让人觉得列表出得慢。
+ */
+.document-row,
+.job-card {
+  animation: item-in var(--dur-base) var(--ease-out) both;
+}
+.document-row:nth-child(2),
+.job-card:nth-child(2) {
+  animation-delay: 18ms;
+}
+.document-row:nth-child(3),
+.job-card:nth-child(3) {
+  animation-delay: 36ms;
+}
+.document-row:nth-child(4),
+.job-card:nth-child(4) {
+  animation-delay: 54ms;
+}
+.document-row:nth-child(5),
+.job-card:nth-child(5) {
+  animation-delay: 72ms;
+}
+.document-row:nth-child(6),
+.job-card:nth-child(6) {
+  animation-delay: 90ms;
+}
+.document-row:nth-child(7),
+.job-card:nth-child(7) {
+  animation-delay: 108ms;
+}
+.document-row:nth-child(8),
+.job-card:nth-child(8) {
+  animation-delay: 126ms;
+}
+.document-row:nth-child(n + 9),
+.job-card:nth-child(n + 9) {
+  animation-delay: 144ms;
+}
+@keyframes item-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
 }

@@ -1,5 +1,6 @@
 import { X, type LucideIcon } from 'lucide-react'
 import { useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 import { useFocusTrap } from '../lib/useFocusTrap'
 import { useModalDismiss } from '../lib/useModalDismiss'
@@ -10,6 +11,11 @@ import { useModalDismiss } from '../lib/useModalDismiss'
  * 之前每个弹窗各写一遍 `modal-overlay` / `modal-dialog`，焦点管理只有
  * 作者弹窗靠 `autoFocus` 兜了一下；确认弹窗干脆还是浏览器原生的 `window.confirm`。
  * 统一到这里之后，「弹窗」在全应用只有一种行为。
+ *
+ * 遮罩用 createPortal 挂到 body 上，而不是留在调用它的页面里：
+ * 遮罩是 `position: fixed`，只要祖先里有人带 transform（切页入场动画就是），
+ * fixed 就会改成相对那个祖先定位——遮罩会缩成内容区大小、弹窗也跟着偏。
+ * 挂到 body 之后，不管页面怎么动，遮罩永远是整屏。
  */
 export function Modal({
   ariaLabel,
@@ -33,7 +39,7 @@ export function Modal({
   useModalDismiss(true, onClose)
   useFocusTrap(true, dialogRef)
 
-  return (
+  return createPortal(
     <div
       className={closing ? 'modal-overlay closing' : 'modal-overlay'}
       onClick={onClose}
@@ -49,7 +55,8 @@ export function Modal({
       >
         {children}
       </section>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

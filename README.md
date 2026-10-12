@@ -81,6 +81,8 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8765
 ```
 
+也可以直接双击仓库根目录的 `setup.bat`：它会建好虚拟环境、把国内镜像配置放进 venv、再装依赖，一步做完（可重复执行，已建好的环境会跳过创建）。
+
 虚拟环境固定放在 `backend\.venv`（已在 `.gitignore` 里，各人本地各建一份）；把 `backend` 当项目根，编辑器就能自动识别到它。
 
 **不想建虚拟环境也可以**：用全局 **Python 3.11 / 3.12** 装同一套依赖，然后 `python launcher.py` 启动即可（依赖声明在 `backend\pyproject.toml`，装的时候在 `backend` 目录下执行）。`start.bat` 会按 `backend\.venv` → `backend\venv` → `PATH` 上的 `python` 依次查找解释器，所以两种方式都能双击启动；找不到解释器或解释器里缺依赖时，它会直接打印对应的安装命令，而不是只报一句启动失败。
@@ -104,7 +106,14 @@ npm run build:watch
 
 注意 `--reload` 只监听 `.py` 文件：改了 `VTW_*` 环境变量或新装了依赖，仍然需要重启进程。
 
-依赖默认走国内镜像（`backend\pip.ini`：清华源为主，阿里、腾讯为备），无需额外配置。
+依赖走国内镜像（`backend\pip.ini`：清华源为主，阿里、腾讯为备）。**这份配置需要复制进虚拟环境才会生效**——pip 的 site 级配置只读 `<venv>\pip.ini`，不读项目目录里的文件，所以直接 `pip install` 走的其实是 PyPI 官方源。双击 `setup.bat` 建环境会自动完成这一步；已有的虚拟环境手动执行一次即可：
+
+```powershell
+cd backend
+copy pip.ini .venv\pip.ini
+```
+
+之后可以确认生效：`pip config list` 应列出 `global.index-url = https://pypi.tuna.tsinghua.edu.cn/simple`。用全局 Python（不建虚拟环境）时不适用这条，需自行配置 pip 或给命令加 `-i`。
 
 > 若在受限环境（如自动化沙箱）中安装，需要先清空 `PYTHONPATH`，否则注入的 `sitecustomize.py` 会拦截 pip 的删除操作导致安装中断：
 > `.\.venv\Scripts\python -m pip install -e ".[dev]"` 前先执行 `$env:PYTHONPATH=""`。

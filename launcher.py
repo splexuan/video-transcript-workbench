@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -14,6 +15,16 @@ BACKEND = ROOT / "backend"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 HEALTH_URL = "http://127.0.0.1:8765/api/health"
 APP_URL = "http://127.0.0.1:8765"
+
+# 可选依赖：缺了不影响启动，但对应能力会不可用。它们装在独立 extra 里，所以
+# 「按 README 装了 .[dev]」的环境默认就没有——而用户往往要到用那个功能时才发现。
+# 启动时统一提示一次，比等到功能报错再解释要早。
+#
+# 这里刻意只提示、不拦截：这些功能都是可选的，为它们挡住整个应用不合理。
+OPTIONAL_DEPENDENCIES = (
+    ("cryptography", "ai", "WorkBuddy 本机登录（登录态是加密的，需要它解密）"),
+    ("faster_whisper", "accurate", "「精准时间轴」识别模式"),
+)
 
 
 def health_check(timeout: float = 0.5) -> bool:
@@ -34,6 +45,21 @@ def preflight() -> list[str]:
     return errors
 
 
+def optional_dependency_notes() -> list[str]:
+    """列出没装的「可选依赖」及其影响，给出可直接粘贴的安装命令。
+
+    用 find_spec 而不是 import：后者会把模块真正加载一遍（faster-whisper 这类要几秒），
+    而这里的结论只看「装没装」。
+    """
+
+    notes: list[str] = []
+    for module, extra, feature in OPTIONAL_DEPENDENCIES:
+        if importlib.util.find_spec(module) is not None:
+            continue
+        notes.append(f'{feature}不可用：缺少 {module}。安装：pip install -e ".[{extra}]"')
+    return notes
+
+
 def stop_process(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
@@ -51,6 +77,11 @@ def main() -> int:
         for message in errors:
             print(f"[错误] {message}")
         return 1
+
+    # 可选依赖只提示不拦截：缺了照样启动，只是对应功能用不了。
+    # --check 也照常提示，那正是它存在的意义。
+    for note in optional_dependency_notes():
+        print(f"[提示] {note}")
 
     if "--check" in sys.argv:
         print("启动环境检查通过")

@@ -18,16 +18,28 @@ dependencies = [
   # 打包版常驻系统托盘：pystray 提供托盘菜单，Pillow 读图标
   "pystray>=0.19,<1",
   "pillow>=11,<13",
+  # schemas.py 直接 import 了 pydantic 的 BaseModel，显式声明，避免上游改依赖时静默缺失
+  "pydantic>=2.7,<3",
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
   "sherpa-onnx>=1.12,<2",
   "soundfile>=0.13,<1",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.35,<1",
+  # browser_login.py 用的是 websockets.sync.client（12.0 起才有）。uvicorn[standard] 只要求
+  # websockets>=10.4，环境里已经有旧版时 pip 不会升级，会在 import app.main 时抛
+  # ModuleNotFoundError: No module named 'websockets.sync'，所以这里显式钉住下界。
+  "websockets>=12,<16",
   "yt-dlp>=2026.8.1",
 ]
 
 [project.optional-dependencies]
+# 本机 AI 驱动：WorkBuddy 新版客户端的登录字段是加密的，解密要用 cryptography。
+# 缺它时「明文登录字段」的客户端仍可正常使用，只是加密登录态会给出可执行的安装提示。
+# 安装命令：pip install ".[ai]"
+ai = [
+  "cryptography>=43,<47",
+]
 # 精准时间轴模式的可选引擎。安装命令：pip install ".[accurate]"
 accurate = [
   "faster-whisper>=1.1,<2",

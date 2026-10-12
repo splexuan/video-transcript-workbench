@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.application.ai_assist import provider_catalog, run_task
 from app.application.exporters import export_document
 from app.application.pagination import MAX_PAGE_SIZE, InvalidCursor
 from app.application.services import (
@@ -57,6 +58,7 @@ from app.application.services import (
 )
 from app.config import settings
 from app.domain import EngineUnavailableError, ModelNotFoundError
+from app.infrastructure.ai_engines import AiEngineError
 from app.infrastructure.cover_store import cover_path
 from app.infrastructure.credential_store import all_status
 from app.infrastructure.database import get_session
@@ -64,6 +66,8 @@ from app.infrastructure.media import tools_ready
 from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.models import Document, Job, JobBatch
 from app.schemas import (
+    AiSummarizeRequest,
+    AiSummaryRead,
     AuthorPage,
     BodyWrite,
     DocumentDetail,
@@ -736,3 +740,34 @@ def patch_settings(
     session: SessionDep,
 ) -> dict[str, str | bool]:
     return update_settings(session, payload)
+
+
+@router.get("/ai/providers")
+def ai_providers(session: SessionDep) -> dict:
+    """可用的 AI 驱动（含不可用的原因）+ 各自的模型清单 + 上次的选择。
+
+    本机的 WorkBuddy / Codex 只读本机登录态，不联网校验；调用失败会在总结接口上报错。
+    """
+
+    return provider_catalog(session)
+
+
+@router.post("/ai/summarize", response_model=AiSummaryRead)
+def ai_summarize(payload: AiSummarizeRequest, session: SessionDep) -> AiSummaryRead:
+    """用所选的本机驱动（WorkBuddy / Codex）做一次 AI 总结。
+
+    DeepSeek 是浏览器驱动，不经过这里：前端按 /api/ai/providers 的选择直接跳网页。
+    """
+
+    try:
+        result = run_task(
+            session,
+            "summary",
+            title=payload.title,
+            text=payload.text,
+            provider=payload.provider or "",
+            model=payload.model or "",
+        )
+    except AiEngineError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return AiSummaryRead(**result)

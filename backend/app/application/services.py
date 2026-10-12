@@ -57,7 +57,15 @@ DEFAULT_SETTINGS = {
     "storage_path": "",
     # 兜底解析接口的 API Key：加密后存在同一张设置表里，读取时只回传「是否已配置」
     "fallback_api_key": "",
+    # 「AI 总结」用哪个驱动：deepseek（跳网页）/ workbuddy / codex（本机登录态）；
+    # ai_model 为空表示交给驱动自己挑默认模型，ai_proxy 只给需要出网的 Codex 用。
+    "ai_provider": "deepseek",
+    "ai_model": "",
+    "ai_proxy": "",
 }
+
+# AI 驱动的白名单：设置值与数据库里的历史值都要落在这三个里，否则退回 DeepSeek。
+AI_PROVIDERS = ("deepseek", "workbuddy", "codex")
 
 # 兜底解析（第三方聚合接口）的 Key 设置项：只写不读，明文不出后端
 FALLBACK_API_KEY_SETTING = "fallback_api_key"
@@ -1053,6 +1061,12 @@ def read_settings(session: Session) -> dict[str, str | bool]:
         "storage_path": merged["storage_path"],
         # Key 明文不回传，前端只知道配了没有
         "fallback_api_key_set": read_fallback_api_key(session) is not None,
+        # 白名单外的历史值一律退回 DeepSeek，避免前端拿到选不中的驱动
+        "ai_provider": merged["ai_provider"]
+        if merged["ai_provider"] in AI_PROVIDERS
+        else DEFAULT_SETTINGS["ai_provider"],
+        "ai_model": merged["ai_model"],
+        "ai_proxy": merged["ai_proxy"],
     }
 
 

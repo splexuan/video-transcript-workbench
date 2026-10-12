@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, ListTodo, LoaderCircle, Pause, Play, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, ListTodo, LoaderCircle, Pause, Pencil, Play, RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
@@ -535,6 +535,18 @@ export function JobsPage() {
                 </div>
                 <div className="job-card-actions">
                   {/* 卡片整行可点，行内按钮要把点击拦下来，别顺手把文案也打开了 */}
+                  {/* 已完成的卡片给一条直达编辑页的路：整行点击只到预览，
+                      要改内容不必再进预览弹窗点一次「打开编辑」 */}
+                  {documentId && (
+                    <Link
+                      className="text-button"
+                      to={`/documents/${documentId}`}
+                      state={{ from: '/jobs', label: '任务队列' }}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Pencil size={15} /> 编辑文案
+                    </Link>
+                  )}
                   {retryable && (
                     <button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); void retry(job.id) }} disabled={busyId === job.id}><RotateCcw size={15} /> 重新提取</button>
                   )}

@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { api } from '../lib/api'
+import { useScrollMemory } from '../lib/scrollMemory'
 import type { AppSettings } from '../types'
 
 /**
@@ -79,16 +80,15 @@ function withoutTransitions(apply: () => void) {
 
 export function AppShell() {
   const navigate = useNavigate()
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   const [mode, setMode] = useState<ThemeMode>(cachedMode)
   // 版本号来自 /api/health（最稳的一个接口）。程序不自带更新检查：
   // 发行包由人工分发，换版本靠解压覆盖，界面只如实显示当前是哪个版本。
   const [version, setVersion] = useState('')
 
-  // 移动端从长列表切换页面时回到页首，避免新页面从旧滚动位置开始。
-  useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-  }, [pathname])
+  // 滚动位置跟着 location 走：进编辑页改完一条再回来，停在原来那一行而不是被弹回页首。
+  // 之前是每次换页都强制回顶，从长列表离开一次，位置就白丢了。
+  useScrollMemory(`${pathname}${search}`)
 
   // 后端设置是主题的唯一真实来源；localStorage 只用于首屏避免闪烁。
   useEffect(() => {
@@ -156,6 +156,14 @@ export function AppShell() {
    * 「新建提取」的落点：已经在工作台时不要做一个「回到当前页」的空动作，
    * 而是把表单重置到可输入状态（清空、切回单条、聚焦输入框）。
    */
+  /**
+   * 已经在某一页时，点侧栏里同一个导航不该把筛选丢掉：列表的筛选条件记在地址上
+   * （见 LibraryPage），`to="/library"` 会连着查询串一起清空，看起来就像「筛选自己没了」。
+   */
+  function navTarget(to: string) {
+    return pathname === to ? `${to}${search}` : to
+  }
+
   function startNewTask() {
     if (pathname === '/') window.dispatchEvent(new Event('vtw:new-task'))
     else navigate('/')
@@ -186,7 +194,7 @@ export function AppShell() {
               {group.items.map((item) => (
                 <NavLink
                   key={item.to}
-                  to={item.to}
+                  to={navTarget(item.to)}
                   end={item.to === '/'}
                   aria-label={item.label}
                   title={item.label}

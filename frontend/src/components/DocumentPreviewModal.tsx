@@ -1,11 +1,13 @@
-import { Bot, Copy, Download, ExternalLink } from 'lucide-react'
+import { Bot, ChevronUp, Copy, Download, ExternalLink } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { AiSummaryView } from './AiSummaryView'
 import { Modal, ModalHeader } from './Modal'
 import { PlatformBadge } from './PlatformBadge'
 import { api } from '../lib/api'
-import { describeSummaryOutcome, openDeepSeekSummary, type SummaryOutcome } from '../lib/deepseek'
+import { useAiSummary } from '../lib/ai'
+import { describeSummaryOutcome, type SummaryOutcome } from '../lib/deepseek'
 import { transcriptAsText, transcriptBlocks } from '../lib/textFormatting'
 import type { DocumentDetail } from '../types'
 
@@ -38,6 +40,14 @@ export function DocumentPreviewModal({
   // 退场期间为 true：样式里据此播 150ms 的淡出 + 上收，然后才真正卸载
   const [closing, setClosing] = useState(false)
   const closingRef = useRef(false)
+  // AI 总结：本机驱动的摘要内联挂在正文上方（这里不再叠一层弹窗，见 AiSummaryView 注释）
+  const aiSummary = useAiSummary()
+  const bodyRef = useRef<HTMLDivElement>(null)
+
+  // 摘要插在正文上方：插入瞬间把内容区拉回顶部，否则看到的是被顶下去的正文
+  useEffect(() => {
+    if (aiSummary.target) bodyRef.current?.scrollTo({ top: 0 })
+  }, [aiSummary.target])
 
   /**
    * 关闭前先播一段轻退场再卸载。退出要比进入轻——用户此刻的注意力已经在下一件事上，
@@ -84,14 +94,24 @@ export function DocumentPreviewModal({
     }
   }
 
-  /** AI 总结：把文案与总结指令带到 DeepSeek（预填或剪贴板，见 lib/deepseek）。 */
+  /**
+   * AI 总结：按「设置 - AI 驱动」分流。
+   *
+   * DeepSeek 走新标签页（预填或剪贴板，见 lib/deepseek），本机驱动则把结果内联展开，
+   * 所以这里不再叠一层弹窗。
+   */
   async function summarize() {
     if (!detail) return
     setError('')
-    const outcome = await openDeepSeekSummary(detail.title, plainText())
-    const { message, isError } = describeSummaryOutcome(outcome)
+    setSummaryNote('')
+    const result = await aiSummary.start(documentId, detail.title, plainText())
+    if (result.kind === 'local') return
+    if (result.kind === 'error') {
+      setError(result.message)
+      return
+    }
+    const { message, isError } = describeSummaryOutcome(result.outcome)
     if (isError) {
-      setSummaryNote('')
       setError(message)
       return
     }
@@ -100,7 +120,7 @@ export function DocumentPreviewModal({
       copied: '已复制，去粘贴',
       'copy-failed': '请手动复制',
     }
-    setSummaryNote(notes[outcome.kind] ?? '')
+    setSummaryNote(notes[result.outcome.kind] ?? '')
     window.setTimeout(() => setSummaryNote(''), 3000)
   }
 
@@ -139,7 +159,14 @@ export function DocumentPreviewModal({
               </a>
             )}
           </div>
-          <div className="modal-body">
+          <div className="modal-body" ref={bodyRef}>
+            {/* 摘要挂在正文上方：正文一直看得见，不用「跳过去再跳回来」；
+                收起后缓存还在，再点开是直接显示，不会重新调用引擎 */}
+            {aiSummary.target && (
+              <div className="ai-summary-inline">
+                <AiSummaryView target={aiSummary.target} />
+              </div>
+            )}
             {detail.segments.length === 0 ? (
               <p className="compact-empty">这条文案还没有内容。</p>
             ) : (
@@ -152,14 +179,22 @@ export function DocumentPreviewModal({
             <button className="text-button" type="button" onClick={() => void copy()}>
               <Copy size={15} /> {copied ? '已复制' : '复制全文'}
             </button>
-            <button
-              className="text-button"
-              type="button"
-              onClick={() => void summarize()}
-              title="把文案与总结指令带到 DeepSeek（内容会发送给第三方服务）"
-            >
-              <Bot size={15} /> {summaryNote || 'AI 总结'}
-            </button>
+            {/* 同一个按钮兼作开关：展开后变成「收起总结」，收起时摘要留在缓存里 */}
+            {aiSummary.target ? (
+              <button className="text-button" type="button" onClick={aiSummary.close}>
+                <ChevronUp size={15} /> 收起总结
+              </button>
+            ) : (
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => void summarize()}
+                disabled={aiSummary.resolving}
+                title="按「设置 - AI 驱动」的选择做总结：DeepSeek 跳网页，WorkBuddy / Codex 用本机已登录的账号在这台电脑上跑"
+              >
+                <Bot size={15} /> {aiSummary.resolving ? '准备中…' : summaryNote || 'AI 总结'}
+              </button>
+            )}
             {/* 导出入口给全四种格式，不必为了 SRT 再进编辑页 */}
             <span className="modal-export">
               <Download size={15} />

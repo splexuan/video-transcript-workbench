@@ -1,6 +1,6 @@
-import { ArrowDown, Download, FileText, Search, Trash2, Users, X } from 'lucide-react'
-import { useDeferredValue, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { ArrowDown, Download, FileText, Pencil, Search, Trash2, Users, X } from 'lucide-react'
+import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 
 import { DocumentPreviewModal } from '../components/DocumentPreviewModal'
 import { EmptyState } from '../components/EmptyState'
@@ -33,19 +33,35 @@ const AUTHOR_PAGE_SIZE = 100
  */
 const platformOptions = Object.entries(platformLabels).filter(([value]) => value !== 'unknown')
 
+/** 记在地址上的四个筛选条件 */
+type FilterKey = 'q' | 'platform' | 'sort' | 'uploader'
+
 export function LibraryPage() {
-  const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
-  const [platformFilter, setPlatformFilter] = useState('all')
+  // 筛选条件放在地址上：刷新、返回、把链接发给别人，都能回到同一个列表视图
+  const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const query = searchParams.get('q') ?? ''
+  const platformFilter = searchParams.get('platform') ?? 'all'
   // 排序与作者筛选同样交给服务端：按字数排全库和排当前页是两回事
-  const [sort, setSort] = useState('updated')
+  const sort = searchParams.get('sort') ?? 'updated'
   // 选中的作者；空串表示不按作者筛
-  const [uploader, setUploader] = useState('')
+  const uploader = searchParams.get('uploader') ?? ''
+  // 搜索框先本地回显，停手后再写进地址（写进去才触发新的一次请求）
+  const [queryInput, setQueryInput] = useState(query)
+  // 已经提交到地址上的 q：用来分辨「地址被外部改掉」与「自己刚提交的」
+  const committedQuery = useRef(query)
+  // 进编辑页时的返回落点：带上当前筛选，改完一条回来还是刚才那个列表
+  const listHref = `/library${location.search}`
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
   // 下一页游标；为 null 表示已经到底
   const [cursor, setCursor] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
+  // 列表请求的身份：筛选条件一变就是新的一次请求。loading 由「这次请求回来了没有」推导，
+  // 而不是在 effect 里同步 setState——那会多一轮渲染，react-hooks 也会直接报出来
+  const requestKey = JSON.stringify([query, platformFilter, uploader, sort])
+  const [loadedKey, setLoadedKey] = useState('')
+  const loading = loadedKey !== requestKey
   const [loadingMore, setLoadingMore] = useState(false)
   // 点行先弹窗预览，要改内容再进编辑页
   const [previewId, setPreviewId] = useState('')
@@ -61,12 +77,60 @@ export function LibraryPage() {
   const [authorTotal, setAuthorTotal] = useState(0)
   const [authorError, setAuthorError] = useState('')
 
+  /**
+   * 改筛选条件：写进地址，列表请求跟着地址走。
+   * 用 replace 而不是 push——筛了三次再点返回，该回到上一页，不是回到上一个筛选。
+   */
+  function applyFilters(patch: Partial<Record<FilterKey, string>>) {
+    const next = new URLSearchParams(searchParams)
+    for (const [key, value] of Object.entries(patch) as [FilterKey, string][]) {
+      // 默认值不进地址：链接更短，也省掉「同一套筛选被写两遍」
+      const isDefault =
+        !value ||
+        (key === 'platform' && value === 'all') ||
+        (key === 'sort' && value === 'updated')
+      if (isDefault) next.delete(key)
+      else next.set(key, value)
+    }
+    setError('')
+    setSearchParams(next, { replace: true })
+  }
+
+  /**
+   * 「编辑」入口：直接进编辑页。点整行仍然是「预览」——那是看内容最短的一条路，
+   * 但改一个字不该先开预览再点「打开编辑」。
+   */
+  function openEditor(id: string) {
+    navigate(`/documents/${id}`, { state: { from: listHref, label: '文案库' } })
+  }
+
+  // 地址上的 q 被外部改动时（例如点侧栏「文案库」清掉筛选），输入框要跟着回到新值
+  useEffect(() => {
+    if (query === committedQuery.current) return
+    committedQuery.current = query
+    setQueryInput(query)
+  }, [query])
+
+  // 输入停手 250ms 再提交：每敲一个字就改一次地址、打一次接口，日志和网络面板都太吵。
+  // 默认值不写进地址（见 applyFilters），所以「清空搜索」等于回到不带 q 的那个视图。
+  useEffect(() => {
+    if (queryInput === query) return
+    const timer = window.setTimeout(() => {
+      committedQuery.current = queryInput
+      applyFilters({ q: queryInput })
+    }, 250)
+    return () => window.clearTimeout(timer)
+    // searchParams 必须列进来：防抖期间改了平台/作者时，得拿最新的那套条件去拼地址，
+    // 否则提交搜索会把刚点的作者筛选抹掉
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryInput, query, searchParams])
+
   // 搜索、平台、作者、排序都交给服务端。分页之后前端只有一页数据，再本地过滤就变成
   // 「只筛当前这一页」，用户会以为库里只有这几条。
   //
   // 列表与批量导出共用这一份条件：各写一套的话会出现「列表看着筛过了、导出来却是全部」。
   const filters = {
-    q: deferredQuery || undefined,
+    q: query || undefined,
     platform: platformFilter === 'all' ? undefined : platformFilter,
     uploader: uploader || undefined,
     sort,
@@ -89,14 +153,14 @@ export function LibraryPage() {
         if (active) setError(reason.message || '读取文案失败')
       })
       .finally(() => {
-        if (active) setLoading(false)
+        if (active) setLoadedKey(requestKey)
       })
     return () => {
       active = false
     }
-    // filterParams 每次渲染都是新对象，所以按字段列依赖
+    // filterParams 每次渲染都是新对象，所以按 requestKey 触发——两者由同一组筛选条件算出
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deferredQuery, platformFilter, uploader, sort])
+  }, [requestKey])
 
   useEffect(() => {
     if (!authorPanel) return
@@ -121,18 +185,14 @@ export function LibraryPage() {
 
   /** 选中一位作者：收起面板，列表只留他的文案。 */
   function pickAuthor(name: string) {
-    setUploader(name)
     setAuthorPanel(false)
-    setLoading(true)
-    setError('')
+    applyFilters({ uploader: name })
   }
 
   /** 工具栏下拉与列头点排序改的是同一件事，收在一个函数里 */
   function applySort(next: string) {
     if (next === sort) return
-    setSort(next)
-    setLoading(true)
-    setError('')
+    applyFilters({ sort: next })
   }
 
   /** 勾选/取消一篇。必须换一个 Set 实例，原地改不会被 React 认出来。 */
@@ -207,12 +267,12 @@ export function LibraryPage() {
         <label className="search-box">
           <Search size={17} />
           <span className="sr-only">搜索文案标题、正文、作者或作品介绍</span>
-          <input value={query} onChange={(event) => { setQuery(event.target.value); setLoading(true); setError('') }} placeholder="搜索标题、正文或作者" />
+          <input value={queryInput} onChange={(event) => setQueryInput(event.target.value)} placeholder="搜索标题、正文或作者" />
         </label>
         <div className="toolbar-filters">
           <label className="filter-select">
             <span className="sr-only">按平台筛选</span>
-            <select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value); setLoading(true); setError('') }}>
+            <select value={platformFilter} onChange={(event) => applyFilters({ platform: event.target.value })}>
               <option value="all">全部平台</option>
               {platformOptions.map(([value, label]) => (
                 <option value={value} key={value}>{label}</option>
@@ -242,7 +302,7 @@ export function LibraryPage() {
               className="filter-chip"
               type="button"
               title="清掉作者筛选"
-              onClick={() => { setUploader(''); setLoading(true); setError('') }}
+              onClick={() => applyFilters({ uploader: '' })}
             >
               作者：{uploader}
               <X size={14} />
@@ -322,10 +382,13 @@ export function LibraryPage() {
               <span className="sr-only" role="columnheader">操作</span>
             </div>
             {documents.map((document) => (
+              // 整行仍然指向编辑页（中键/新标签页打开走的就是它），但左键先开预览——
+              // 「看内容」比「改内容」更常发生；要直接改的是行尾的「编辑」按钮。
+              // 落点都带上当前筛选（listHref），返回时还是同一个列表视图。
               <Link
                 className={selected.has(document.id) ? 'library-row selected' : 'library-row'}
                 to={`/documents/${document.id}`}
-                state={{ from: '/library', label: '文案库' }}
+                state={{ from: listHref, label: '文案库' }}
                 key={document.id}
                 role="row"
                 onClick={(event) => { event.preventDefault(); setPreviewId(document.id) }}
@@ -370,10 +433,19 @@ export function LibraryPage() {
                 </span>
                 <span className="word-cell" role="cell"><span className="mobile-only">字数 </span>{document.word_count}</span>
                 <span className="date-cell" role="cell">{dateLabel(document.updated_at)}</span>
-                {/* 整行是链接，删除按钮要拦下冒泡，避免点删除跳进编辑页 */}
+                {/* 整行是链接，行内按钮都要拦下冒泡，避免顺手把预览也打开 */}
                 <span className="row-actions" role="cell">
                   <button
                     className="icon-button"
+                    type="button"
+                    onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEditor(document.id) }}
+                    aria-label={`编辑《${document.title}》`}
+                    title="编辑"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    className="icon-button danger"
                     type="button"
                     onClick={(event) => { event.preventDefault(); event.stopPropagation(); void remove(document.id, document.title) }}
                     disabled={removingId === document.id}
@@ -437,7 +509,7 @@ export function LibraryPage() {
         </Modal>
       )}
       {previewId && (
-        <DocumentPreviewModal key={previewId} documentId={previewId} backTo="/library" backLabel="文案库" onClose={() => setPreviewId('')} />
+        <DocumentPreviewModal key={previewId} documentId={previewId} backTo={listHref} backLabel="文案库" onClose={() => setPreviewId('')} />
       )}
     </div>
   )

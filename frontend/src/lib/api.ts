@@ -1,4 +1,7 @@
 import type {
+  AiProviderCatalog,
+  AiProviderType,
+  AiSummaryResult,
   AppSettings,
   AuthorPage,
   Connector,
@@ -164,6 +167,11 @@ export const api = {
   settings: () => request<AppSettings>('/api/settings'),
   updateSettings: (payload: Partial<AppSettings>) =>
     request<AppSettings>('/api/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  /** AI 驱动清单：可用性、各自的模型、以及上次的选择（本机引擎的模型会联网取一次）。 */
+  aiProviders: () => request<AiProviderCatalog>('/api/ai/providers'),
+  /** 用所选的本机驱动（WorkBuddy / Codex）跑一次 AI 总结；DeepSeek 由前端跳网页完成。 */
+  aiSummarize: (payload: { title: string; text: string; provider?: AiProviderType; model?: string }) =>
+    request<AiSummaryResult>('/api/ai/summarize', { method: 'POST', body: JSON.stringify(payload) }),
   models: () => request<ModelCatalog>('/api/models'),
   downloadModel: (id: string) =>
     request<InstallProgress>(`/api/models/${id}/download`, { method: 'POST' }),

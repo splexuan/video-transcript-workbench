@@ -606,6 +606,67 @@ button:disabled {
   min-height: 30px;
   padding: 0 10px;
 }
+
+/* ---------- AI 总结（本机驱动） ---------- */
+/* 编辑页放在弹窗里、预览弹窗里内联展开，所以这一块只管内容排版，不带自己的外壳 */
+.ai-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ai-summary-source {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.ai-summary-source small {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.ai-summary-state {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 128px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+.ai-summary-state small,
+.ai-summary-actions small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+.ai-summary-text {
+  max-height: min(52vh, 460px);
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  /* 摘要是多段纯文本：保留换行，长链接也不撑破弹窗 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+.ai-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* 预览弹窗里把摘要挂在正文上方：一条分隔线划开，正文照旧看得见 */
+.ai-summary-inline {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
 @keyframes modal-fade {
   from {
     opacity: 0;
@@ -1700,14 +1761,14 @@ span.task-exec-cover {
 .library-table {
   /* 7 列 + 6 个列间距 + 左右内边距的实际需要宽度。写小了最后一列会被裁掉。
      比原来的 1010px 窄 110px：「来源」与「平台」合成一列后，
-     1200px 级的屏幕不用再横向滚动 */
-  min-width: 900px;
+     1200px 级的屏幕不用再横向滚动；操作列后来又加了「编辑」按钮，再让出 20px */
+  min-width: 920px;
 }
 .library-head,
 .library-row {
   display: grid;
-  /* 勾选 | 标题 | 来源（平台徽标 + 单条/批量） | 作者 | 字数 | 最近更新 | 操作 */
-  grid-template-columns: 18px minmax(240px, 1.7fr) 116px 132px 76px 116px 56px;
+  /* 勾选 | 标题 | 来源（平台徽标 + 单条/批量） | 作者 | 字数 | 最近更新 | 操作（编辑 + 删除） */
+  grid-template-columns: 18px minmax(240px, 1.7fr) 116px 132px 76px 116px 72px;
   align-items: center;
   gap: 16px;
   padding: 0 20px;
@@ -1730,9 +1791,10 @@ span.task-exec-cover {
 }
 .library-row .row-actions {
   display: flex;
+  gap: 6px;
   justify-content: flex-end;
 }
-/* 行内的删除按钮平时弱化显示，悬停整行时才提醒可操作 */
+/* 行内的操作按钮平时弱化显示，悬停整行时才提醒可操作 */
 .library-row .icon-button {
   width: 32px;
   height: 32px;
@@ -1742,7 +1804,8 @@ span.task-exec-cover {
 .library-row .icon-button:focus-visible {
   opacity: 1;
 }
-.library-row .icon-button:hover {
+/* 删除是行内唯一的破坏性动作，悬停用危险色提示；「编辑」用通用的悬停样式 */
+.library-row .icon-button.danger:hover {
   color: var(--danger);
   border-color: var(--danger);
 }
@@ -2836,7 +2899,10 @@ span.task-exec-cover {
 .settings-layout {
   display: grid;
   gap: var(--space-xl);
+  /* 单列时的可读行宽：这一页全是「一行说明 + 一个控件」，
+     行拉太长反而不好扫（宽屏改成两列，见文件末尾的响应式） */
   max-width: 820px;
+  align-items: start;
 }
 .settings-section {
   /* 左右比上下更宽一档：这一页全是「一行说明 + 一个控件」，
@@ -3031,15 +3097,6 @@ select {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
-.settings-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 16px;
-  margin-top: 20px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border);
-}
 /* 说明性小块：左边一个图标，右边一行标题 + 一段说明。
    本地存储那条用成功色（数据都在本机）；关于页的更新说明是中性的，
    不该借用「一切正常」的绿色 */
@@ -3076,12 +3133,9 @@ select {
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
-.save-message {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--success);
-  font-size: var(--text-xs);
+/* 设置页顶部那条保存失败提示：紧贴页头，和下面的表单拉开距离 */
+.settings-save-error {
+  margin: 0 0 24px;
 }
 /* ---------- 编辑器 ---------- */
 
@@ -4142,6 +4196,26 @@ button.timecode:hover:not(:disabled) {
 }
 
 /* ---------- 响应式 ---------- */
+
+/* 宽屏下设置页拆成两列。断点取 1280：此时每列内宽约 520（说明 12px 下每行二十来字、
+   右侧控件与提示仍能并排），再窄就会挤成一行十来个字。两列之后 .page 自身的 1440
+   上限也还在，窗口再宽也不会把一列拉得过长。 */
+@media (min-width: 1280px) {
+  .settings-layout {
+    max-width: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* 每列窄了，说明右边那列提示文字要收一档，否则控件会被顶出这一行 */
+  .settings-layout .field-hint,
+  .settings-layout .field-error {
+    max-width: 240px;
+  }
+  /* 卡片是奇数张（任务偏好 / AI 驱动 / 兜底解析 / 本地存储 / 关于），
+     最后一行的「关于」跨两列收尾——否则它左边一张、右边的空位会显得缺了一块 */
+  .settings-layout > .settings-section:last-child {
+    grid-column: 1 / -1;
+  }
+}
 
 @media (max-width: 1120px) {
   .app-shell {

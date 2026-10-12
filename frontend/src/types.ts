@@ -206,6 +206,47 @@ export interface AppSettings {
   fallback_api_key_set: boolean
   /** 仅提交时使用：写入兜底解析的 API Key（空串表示清除）；读取设置时不会返回。 */
   fallback_api_key?: string
+  /** 「AI 总结」用哪个驱动：deepseek 跳网页，workbuddy / codex 走本机登录态。 */
+  ai_provider: AiProviderType
+  /** 本机驱动的对话模型；留空表示用该驱动的默认模型。 */
+  ai_model: string
+  /** Codex 出网用的代理（本机设置）；留空走系统默认。 */
+  ai_proxy: string
+}
+
+/** AI 驱动：deepseek 是浏览器驱动（跳网页），其余是本机登录的引擎。 */
+export type AiProviderType = 'deepseek' | 'workbuddy' | 'codex'
+
+export interface AiProviderModel {
+  id: string
+  label: string
+}
+
+export interface AiProvider {
+  type: AiProviderType
+  name: string
+  /** browser = 前端跳转到网页完成；local = 后端用本机登录态跑。 */
+  mode: 'browser' | 'local'
+  note: string
+  /** 未登录/无模型时为 false；设置页据此禁用选项并显示 message。 */
+  available: boolean
+  message: string
+  models: AiProviderModel[]
+  default_model: string
+}
+
+/** 驱动清单 + 上次的选择（后端已把不可用的驱动退回 DeepSeek）。 */
+export interface AiProviderCatalog {
+  providers: AiProvider[]
+  preference: { provider: AiProviderType; model: string }
+}
+
+export interface AiSummaryResult {
+  provider: AiProviderType
+  provider_name: string
+  model: string
+  text: string
+  usage: Record<string, unknown>
 }
 
 /** 后端 /api/health 的返回；界面用它显示版本号。 */

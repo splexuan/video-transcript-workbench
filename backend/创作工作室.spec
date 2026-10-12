@@ -94,6 +94,19 @@ for package in ("yt_dlp", "sherpa_onnx", "anyio", "faster_whisper", "ctranslate2
     binaries += collected_binaries
     hiddenimports += collected_hidden
 
+# 本机 AI 驱动（WorkBuddy / Codex）：cryptography 只在读加密登录字段时才 import，
+# 静态分析看不到，且带 OpenSSL 二进制扩展，必须整包收集。
+if importlib.util.find_spec("cryptography") is None:
+    print(
+        "[打包提示] 当前环境没有 cryptography：WorkBuddy 加密登录态读不了"
+        "（明文登录字段不受影响），本机 AI 驱动仍可用 Codex"
+    )
+else:
+    collected_datas, collected_binaries, collected_hidden = collect_all("cryptography")
+    datas += collected_datas
+    binaries += collected_binaries
+    hiddenimports += collected_hidden + ["cryptography.hazmat.primitives.ciphers.aead"]
+
 # PyAV 自带的 ffmpeg 动态库（部分平台下载用）
 datas += collect_data_files("av")
 

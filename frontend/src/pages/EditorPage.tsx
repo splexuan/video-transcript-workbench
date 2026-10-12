@@ -2,11 +2,13 @@ import { ArrowLeft, Bot, Check, Copy, Film, Info, RefreshCw, RotateCcw, Sparkles
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
+import { AiSummaryModal } from '../components/AiSummaryView'
 import { LoadingState } from '../components/LoadingState'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { api } from '../lib/api'
+import { useAiSummary } from '../lib/ai'
 import { useConfirm } from '../lib/useConfirm'
-import { describeSummaryOutcome, openDeepSeekSummary } from '../lib/deepseek'
+import { describeSummaryOutcome } from '../lib/deepseek'
 import { transcriptAsText } from '../lib/textFormatting'
 import type { DocumentDetail, EditorNavState, TranscriptSegment } from '../types'
 
@@ -47,6 +49,8 @@ export function EditorPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const confirm = useConfirm()
+  // AI 总结的分流与结果弹窗：驱动从设置读，跳网页还是用本机账号由它决定
+  const aiSummary = useAiSummary()
   // 窄屏下来源面板默认收起；宽屏时这个状态不起作用（面板常驻）
   const [sourceOpen, setSourceOpen] = useState(false)
   const nav = (location.state ?? null) as EditorNavState | null
@@ -176,16 +180,24 @@ export function EditorPage() {
     }
   }
 
-  /** AI 总结：把文案与总结指令带到 DeepSeek（预填或剪贴板，见 lib/deepseek）。 */
-  async function summarizeWithDeepSeek() {
+  /**
+   * AI 总结：按「设置 - AI 驱动」的选择分流。
+   *
+   * DeepSeek 会把指令带进网页（见 lib/deepseek），本机驱动（WorkBuddy / Codex）则在
+   * 后台跑完、结果回到弹窗里展示，不跳转浏览器。
+   */
+  async function summarize() {
     if (!document) return
     setActionError('')
     setActionMessage('')
-    const { message, isError } = describeSummaryOutcome(
-      await openDeepSeekSummary(document.title, currentPlainText()),
-    )
-    if (isError) setActionError(message)
-    else setActionMessage(message)
+    const result = await aiSummary.start(document.id, document.title, currentPlainText())
+    if (result.kind === 'browser') {
+      const { message, isError } = describeSummaryOutcome(result.outcome)
+      if (isError) setActionError(message)
+      else setActionMessage(message)
+      return
+    }
+    if (result.kind === 'error') setActionError(result.message)
   }
 
   async function download(format: 'txt' | 'srt' | 'vtt' | 'json') {
@@ -422,7 +434,15 @@ export function EditorPage() {
             <Info size={18} />
           </button>
           <button className="secondary-button" type="button" onClick={() => void copyPlainText()}><Copy size={16} /> 复制全文</button>
-          <button className="secondary-button" type="button" onClick={() => void summarizeWithDeepSeek()} title="把文案与总结指令带到 DeepSeek（内容会发送给第三方服务）"><Bot size={16} /> AI 总结</button>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => void summarize()}
+            disabled={aiSummary.resolving}
+            title="按「设置 - AI 驱动」的选择做总结：DeepSeek 跳网页，WorkBuddy / Codex 用本机已登录的账号在这台电脑上跑"
+          >
+            <Bot size={16} /> {aiSummary.resolving ? '准备中…' : 'AI 总结'}
+          </button>
         </div>
       </header>
       {(actionError || actionMessage) && <div className={`editor-feedback ${actionError ? 'error' : 'success'}`} role={actionError ? 'alert' : 'status'}>{actionError || actionMessage}</div>}
@@ -566,6 +586,8 @@ export function EditorPage() {
           <div className="inspector-block"><span>导出格式</span><div className="format-chips">{(['txt', 'srt', 'vtt', 'json'] as const).map((format) => <button key={format} type="button" onClick={() => void download(format)} disabled={Boolean(exporting)}>{exporting === format ? '…' : format.toUpperCase()}</button>)}</div></div>
         </aside>
       </div>
+      {/* 本机驱动的总结没有「跳转」这一步，结果用弹窗落下来（DeepSeek 走新标签页） */}
+      {aiSummary.target && <AiSummaryModal target={aiSummary.target} onClose={aiSummary.close} />}
     </div>
   )
 }

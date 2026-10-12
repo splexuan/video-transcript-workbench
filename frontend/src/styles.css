@@ -3334,6 +3334,25 @@ span.task-exec-cover {
   justify-items: end;
   gap: 6px;
 }
+/* 用不了的 AI 驱动：下拉里它们是 disabled、选不中，所以原因得单独列出来 */
+.ai-unavailable {
+  display: grid;
+  gap: 5px;
+  padding: 13px 0 2px;
+  border-top: 1px solid var(--border);
+}
+.ai-unavailable strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.ai-unavailable small {
+  color: var(--warning);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+.ai-unavailable small b {
+  font-weight: var(--weight-medium);
+}
 .field-error {
   display: flex;
   align-items: center;

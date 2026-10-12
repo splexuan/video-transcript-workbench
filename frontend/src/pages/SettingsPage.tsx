@@ -185,6 +185,11 @@ export function SettingsPage() {
     : aiCatalog?.providers.find((provider) => provider.type === aiCatalog.preference.provider) ?? null
   /** 设置里选中的语音模型（空串表示「自动」）；用来提示「未安装」。 */
   const ttsSelected = ttsConfig?.models.find((model) => model.id === settings.tts_model) ?? null
+  /**
+   * 用不了的本机驱动。它们在下拉里是 disabled、选不中，所以原因必须单独列出来，
+   * 否则用户只看到「（不可用）」却不知道是缺依赖、没登录还是模型下架。
+   */
+  const unavailableProviders = (aiCatalog?.providers ?? []).filter((provider) => !provider.available)
   // 保存的模型可能已下架：列表里没有就回到该驱动的默认模型，避免下拉显示空白
   const aiModelValue =
     aiProvider && aiProvider.models.some((model) => model.id === settings.ai_model)
@@ -278,6 +283,19 @@ export function SettingsPage() {
               {!aiError && aiProvider && <small className="field-hint">{aiProvider.message || aiProvider.note}</small>}
             </div>
           </div>
+          {/* 不可用的驱动在下拉里是 disabled 的，选不中，上面的 field-hint 也就只显示当前
+              选中那一个。不把原因单独列出来的话，用户只会看到「（不可用）」三个字，
+              而「为什么不可用、该怎么办」全在后端返回的 message 里，等于白写了。 */}
+          {!aiError && unavailableProviders.length > 0 && (
+            <div className="ai-unavailable">
+              <strong>这些驱动暂时用不了</strong>
+              {unavailableProviders.map((provider) => (
+                <small key={provider.type}>
+                  <b>{provider.name}</b>：{provider.message || '原因未知'}
+                </small>
+              ))}
+            </div>
+          )}
           {/* 只有本机驱动才有模型可选；DeepSeek 的模型在它自己网页里选 */}
           {aiProvider && aiProvider.models.length > 0 && (
             <label className="setting-row" htmlFor="ai-model">

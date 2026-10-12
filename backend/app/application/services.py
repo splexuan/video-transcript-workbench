@@ -62,7 +62,7 @@ DEFAULT_SETTINGS = {
     "ai_provider": "deepseek",
     "ai_model": "",
     "ai_proxy": "",
-    # 「语音合成」默认使用的模型与音色（Kokoro 说话人 id）；留空表示用引擎的默认值。
+    # 「语音合成」默认使用的模型与音色（音色是 ZipVoice 参考音频的 id）；留空表示用引擎默认值。
     "tts_model": "",
     "tts_voice": "",
 }
@@ -1061,6 +1061,12 @@ def _int_setting(value: object) -> int | None:
         return None
 
 
+def _text_setting(value: object) -> str:
+    """字符串设置项读出来的口径：空串统一成空串（而不是 None），前端据此显示「跟随默认」。"""
+
+    return str(value or "").strip()
+
+
 def read_settings(session: Session) -> dict[str, str | bool | int | None]:
     stored = {item.key: item.value for item in session.scalars(select(AppSetting))}
     merged = DEFAULT_SETTINGS | stored
@@ -1082,9 +1088,9 @@ def read_settings(session: Session) -> dict[str, str | bool | int | None]:
         else DEFAULT_SETTINGS["ai_provider"],
         "ai_model": merged["ai_model"],
         "ai_proxy": merged["ai_proxy"],
-        # 语音合成：模型留空跟随引擎默认；音色存的是字符串，读出来转回整数
+        # 语音合成：模型与音色都留空跟随引擎默认；音色 id 是字符串，读出来原样返回
         "tts_model": merged["tts_model"],
-        "tts_voice": _int_setting(merged["tts_voice"]),
+        "tts_voice": _text_setting(merged["tts_voice"]),
     }
 
 

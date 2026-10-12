@@ -1,6 +1,6 @@
 """语音合成任务：后台线程跑，前端轮询进度。
 
-1000 字大约要合成 3~4 分钟（CPU 上 RTF≈0.93），把一个 HTTP 请求挂那么久不合适，
+1000 字大约要合成 2~3 分钟（int8 版 CPU 上 RTF≈0.5），把一个 HTTP 请求挂那么久不合适，
 所以照「模型安装」那套来：后台线程 + 进度快照 + 结果落盘，接口只回状态。
 """
 from __future__ import annotations
@@ -36,7 +36,8 @@ class TtsJob:
     message: str = "排队中"
     percent: int = 0
     model_id: str = tts_engine.DEFAULT_MODEL_ID
-    sid: int = tts_engine.DEFAULT_VOICE
+    # 音色 id：对应一段参考音频（ZipVoice 是零样本克隆，不是固定音色编号）
+    voice: str = tts_engine.DEFAULT_VOICE
     speed: float = tts_engine.DEFAULT_SPEED
     chars: int = 0
     sentences_done: int = 0
@@ -71,11 +72,28 @@ class TtsJobManager:
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    def submit(self, text: str, *, model_id: str, sid: int, speed: float) -> TtsJob:
+    def sweep_orphans(self) -> None:
+        """清掉上次会话遗留的音频文件。
+
+        合成记录只存在内存里（重启即失效），音频却是落盘的：不清的话，每次重启都会
+        留下一批再也引用不到的文件，而 `_prune_locked` 只能清理它自己 pop 掉的记录，
+        磁盘只增不减。合成产物本就是临时物料，所以由应用启动流程调用它清空音频目录。
+
+        刻意不做成构造时自动执行：那会让「import 这个模块」直接删掉用户数据目录里的
+        文件，测试 import 一次就会造成真实破坏。
+        """
+
+        try:
+            for item in self.audio_dir().glob("*.wav"):
+                item.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("清理遗留的合成音频失败", exc_info=True)
+
+    def submit(self, text: str, *, model_id: str, voice: str, speed: float) -> TtsJob:
         job = TtsJob(
             id=uuid.uuid4().hex,
             model_id=model_id,
-            sid=sid,
+            voice=voice,
             speed=speed,
             chars=len(tts_engine.normalize_text(text)),
             message="排队中",
@@ -155,7 +173,11 @@ class TtsJobManager:
                     job.updated_at = time.time()
 
                 samples, rate = tts_engine.synthesize(
-                    text, model_id=job.model_id, sid=job.sid, speed=job.speed, on_progress=on_progress
+                    text,
+                    model_id=job.model_id,
+                    voice_id=job.voice,
+                    speed=job.speed,
+                    on_progress=on_progress,
                 )
                 if job.cancel.is_set():
                     raise TtsCancelled("已取消")

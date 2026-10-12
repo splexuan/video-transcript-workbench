@@ -22,6 +22,8 @@ import type {
   RecognitionModel,
   TtsConfig,
   TtsJob,
+  TtsTranscribeResult,
+  TtsVoice,
 } from '../types'
 
 /** 拼查询串；空值跳过，数组展开成重复参数（后端的 ids 用重复参数收）。 */
@@ -40,12 +42,15 @@ function queryString(params: Record<string, string | number | boolean | null | u
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  // FormData 必须原样交给 fetch：手动设 Content-Type 会丢掉 boundary 参数，
+  // 而 multipart 请求体一旦被标成 application/json，后端就解析不出文件字段（422）。
+  // 项目里唯一在用的上传接口（uploadJob）一直是直接调 fetch 绕开这里的，
+  // 现在把这件事收进 request，调用方不必再记这条规矩。
+  const body = init?.body
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
   const response = await fetch(url, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
+    ...(isFormData ? {} : { headers: { 'Content-Type': 'application/json', ...init?.headers } }),
   })
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: string } | null
@@ -94,6 +99,8 @@ export const api = {
     form.append('mode', mode)
     if (modelId) form.append('model_id', modelId)
     form.append('prefer_subtitle', String(preferSubtitle))
+    // 这里仍直接调 fetch，而不是 request：上传失败要给出「导入失败」而不是通用的
+    // 「请求失败」，前者更贴近用户理解。request 现在也已正确支持 FormData。
     const response = await fetch('/api/jobs/upload', { method: 'POST', body: form })
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { detail?: string } | null
@@ -176,8 +183,25 @@ export const api = {
     request<AiSummaryResult>('/api/ai/summarize', { method: 'POST', body: JSON.stringify(payload) }),
   /** 语音合成页的配置：可选模型与音色、当前选择、估算依据。 */
   ttsConfig: () => request<TtsConfig>('/api/tts'),
+  ttsVoices: () => request<TtsVoice[]>('/api/tts/voices'),
+  /** 转写一段参考音频：用来自动填「音色克隆」里必须逐字一致的参考文本。 */
+  transcribeTtsVoice: (audio: File) => {
+    const form = new FormData()
+    form.append('audio', audio)
+    return request<TtsTranscribeResult>('/api/tts/voices/transcribe', { method: 'POST', body: form })
+  },
+  /** 上传一段参考音频存成自己的音色（multipart：音频文件 + 名称 + 参考文本）。 */
+  createTtsVoice: (payload: { name: string; reference_text: string; audio: File }) => {
+    const form = new FormData()
+    form.append('name', payload.name)
+    form.append('reference_text', payload.reference_text)
+    form.append('audio', payload.audio)
+    return request<TtsVoice>('/api/tts/voices', { method: 'POST', body: form })
+  },
+  deleteTtsVoice: (id: string) =>
+    request<{ id: string; removed: boolean }>(`/api/tts/voices/${id}`, { method: 'DELETE' }),
   /** 提交合成任务（长文本要几分钟，返回后轮询 ttsJob）。 */
-  createTtsJob: (payload: { text: string; voice?: number; speed?: number; model_id?: string }) =>
+  createTtsJob: (payload: { text: string; voice?: string; speed?: number; model_id?: string }) =>
     request<TtsJob>('/api/tts/jobs', { method: 'POST', body: JSON.stringify(payload) }),
   ttsJobs: () => request<TtsJob[]>('/api/tts/jobs'),
   ttsJob: (id: string) => request<TtsJob>(`/api/tts/jobs/${id}`),

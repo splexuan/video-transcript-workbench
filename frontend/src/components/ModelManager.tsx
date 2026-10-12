@@ -55,6 +55,149 @@ const engineIcons: Record<string, typeof Zap> = {
   tts: AudioLines,
 }
 
+/** 缺组件时提示用户装什么：直接报模块名（sherpa_onnx）对普通用户没意义。 */
+const ENGINE_PACKAGE_NAMES: Record<string, string> = {
+  sensevoice: 'sherpa-onnx 运行组件',
+  faster_whisper: 'faster-whisper 运行组件',
+  punctuation: 'sherpa-onnx 运行组件',
+  tts: 'sherpa-onnx 运行组件',
+}
+
+/**
+ * 模型按「用户什么时候需要它」分区，而不是按引擎罗列。
+ *
+ * 之前所有模型平铺在一个列表里，顶部的引擎概览又把它们的信息重复了一遍：
+ * 用户要自己分辨哪几个属于识别、哪几个属于合成。加了分区之后，
+ * 区块标题就能直接把状态、用途、体积说清，模型行只补一个引擎标签（识别区有两个引擎时需要区分）。
+ *
+ * 顺序即使用顺序：先把文案弄出来，再补标点，最后才轮到配音。
+ */
+const GROUPS = [
+  {
+    key: 'recognition',
+    label: '识别与转写',
+    hint: '把视频里的语音转成文字',
+    engines: ['sensevoice', 'faster_whisper'],
+  },
+  {
+    key: 'utility',
+    label: '辅助处理',
+    hint: '给没有标点的字幕补标点',
+    engines: ['punctuation'],
+  },
+  {
+    key: 'tts',
+    label: '语音合成',
+    hint: '把文案读成音频',
+    engines: ['tts'],
+  },
+] as const
+
+/** 一行模型卡片。抽出成组件是因为分组后同样的结构要出现三次。 */
+function ModelRow({
+  model,
+  isDefault,
+  showEngine,
+  busy,
+  onVerify,
+  onDownload,
+  onCancelInstall,
+  onRemove,
+}: {
+  model: RecognitionModel
+  isDefault: boolean
+  /** 同一区里有多个引擎时才显示引擎标签，避免每行都挂一个冗余的标签 */
+  showEngine: boolean
+  busy: boolean
+  onVerify: () => void
+  onDownload: () => void
+  onCancelInstall: () => void
+  onRemove: () => void
+}) {
+  const progress = model.progress
+  const installingNow = model.state === 'installing' && progress !== null
+  const working = busy
+
+  return (
+    <article className="model-row">
+      <div className="model-row-head">
+        <div className="model-row-title">
+          <span className={`model-state ${stateTone(model)}`}>
+            {model.state === 'ready' ? <CheckCircle2 size={14} /> : model.state === 'installing' ? <LoaderCircle className="spin" size={14} /> : model.state === 'broken' ? <AlertTriangle size={14} /> : <Cpu size={14} />}
+            {stateLabels[model.state]}
+          </span>
+          <h3>
+            {displayModelName(model)}
+            {/* 两个标签是两件事：默认用哪个由设置决定，推荐只是出厂建议 */}
+            {isDefault && <span className="model-tag default">当前默认</span>}
+            {model.recommended && <span className="model-tag">推荐</span>}
+          </h3>
+        </div>
+        <span className="model-size">
+          {model.state === 'ready'
+            ? formatBytes(model.installed_bytes)
+            : `约 ${formatBytes(model.approx_bytes)}`}
+        </span>
+      </div>
+
+      {showEngine && (
+        <span className="model-engine-tag">
+          {engineLabels[model.engine] ?? model.engine}
+        </span>
+      )}
+
+      <p className="model-desc">{model.description}</p>
+      <div className="model-meta">
+        <span>支持语言：{model.languages}</span>
+        {model.note && <span>{model.note}</span>}
+      </div>
+
+      {installingNow && progress && (
+        <div className="model-progress" role="status" aria-live="polite">
+          <ProgressBar value={progress.percent} minPercent={2} label={`${displayModelName(model)} 下载进度`} />
+          <div className="model-progress-meta">
+            <span>{progress.message}</span>
+            <span>
+              {progress.total_bytes > 0
+                ? `${formatBytes(progress.downloaded_bytes)} / ${formatBytes(progress.total_bytes)}`
+                : `${progress.completed_files}/${progress.total_files} 个文件`}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div className="model-actions">
+        {installingNow ? (
+          <button className="secondary-button" type="button" disabled={working} onClick={onCancelInstall}>
+            <X size={15} /> 取消安装
+          </button>
+        ) : model.state === 'ready' ? (
+          <>
+            <button className="secondary-button" type="button" disabled={working} onClick={onVerify}>
+              {working ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />} 校验
+            </button>
+            <button
+              className="icon-button danger model-delete"
+              type="button"
+              disabled={working}
+              onClick={onRemove}
+              aria-label={`删除模型 ${model.name}`}
+              title="删除模型"
+            >
+              <Trash2 size={15} />
+            </button>
+          </>
+        ) : (
+          <button className="primary-button" type="button" disabled={working} onClick={onDownload}>
+            {working ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
+            {model.state === 'partial' || model.state === 'broken' ? '重新下载' : '下载模型'}
+          </button>
+        )}
+      </div>
+    </article>
+  )
+}
+
 export function ModelManager() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
   const [busy, setBusy] = useState('')
@@ -129,8 +272,8 @@ export function ModelManager() {
     <section className="panel model-manager" aria-labelledby="model-manager-title">
       <div className="section-heading">
         <div>
-          <h2 id="model-manager-title">识别模型</h2>
-          <p>模型装在本机，装好之后不联网也能识别。</p>
+          <h2 id="model-manager-title">模型管理</h2>
+          <p>模型装在本机，装好之后识别与配音都不联网。</p>
         </div>
         <button className="text-button" type="button" onClick={refresh}>
           <RefreshCw size={15} /> 刷新
@@ -139,125 +282,67 @@ export function ModelManager() {
 
       {catalog === null && !error && <LoadingState label="正在检查本机模型…" rows={4} compact />}
 
-      <div className="engine-summary">
-        {engines.map((engine) => {
-          const label = engineLabels[engine.engine] ?? '识别引擎'
-          const Icon = engineIcons[engine.engine] ?? Cpu
-          return (
-            <div className="engine-pill" key={engine.engine}>
-              <span className={`engine-icon ${engine.ready ? 'ready' : ''}`}><Icon size={16} /></span>
-              <div>
-                <strong>{label}</strong>
-                <small>
-                  {engine.ready
-                    ? '已就绪'
-                    : !engine.package_ready
-                      ? '缺少运行组件'
-                      : '安装下方任一模型后可用'}
-                </small>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
       {error && <p className="form-message error" role="alert">{error}</p>}
       {notice && <p className="form-message success" role="status">{notice}</p>}
 
-      <div className="model-list">
-        {models.map((model) => {
-          const progress = model.progress
-          const installingNow = model.state === 'installing' && progress !== null
-          const working = busy === model.id
-          return (
-            <article className="model-row" key={model.id}>
-              <div className="model-row-head">
-                <div className="model-row-title">
-                  <span className={`model-state ${stateTone(model)}`}>
-                    {model.state === 'ready' ? <CheckCircle2 size={14} /> : model.state === 'installing' ? <LoaderCircle className="spin" size={14} /> : model.state === 'broken' ? <AlertTriangle size={14} /> : <Cpu size={14} />}
-                    {stateLabels[model.state]}
-                  </span>
-                  <h3>
-                    {displayModelName(model)}
-                    {/* 两个标签是两件事：默认用哪个由设置决定，推荐只是出厂建议 */}
-                    {defaultModel === model.id && <span className="model-tag default">当前默认</span>}
-                    {model.recommended && <span className="model-tag">推荐</span>}
-                  </h3>
-                </div>
+      {GROUPS.map((group) => {
+        const groupModels = models.filter((item) => (group.engines as readonly string[]).includes(item.engine))
+        if (!groupModels.length) return null
+        const statusOf = (engine: string) => engines.find((item) => item.engine === engine)
+        const allReady = group.engines.every((engine) => statusOf(engine)?.ready)
+        const missingPackage = group.engines.filter((engine) => !statusOf(engine)?.package_ready)
+        const readyCount = groupModels.filter((item) => item.state === 'ready').length
+        const usedBytes = groupModels
+          .filter((item) => item.state === 'ready')
+          .reduce((sum, item) => sum + item.installed_bytes, 0)
+        const Icon = engineIcons[group.engines[0]] ?? Cpu
+
+        return (
+          <section className="model-group" key={group.key} aria-labelledby={`model-group-${group.key}`}>
+            <div className="model-group-head">
+              <span className={`model-group-icon ${allReady ? 'ready' : ''}`}>
+                <Icon size={17} aria-hidden="true" />
+              </span>
+              <div className="model-group-title">
+                <h3 id={`model-group-${group.key}`}>{group.label}</h3>
+                <small>{group.hint}</small>
+              </div>
+              <div className="model-group-meta">
                 <span className="model-size">
-                  {model.state === 'ready'
-                    ? formatBytes(model.installed_bytes)
-                    : `约 ${formatBytes(model.approx_bytes)}`}
+                  {readyCount}/{groupModels.length} 个可用
+                  {usedBytes > 0 && ` · ${formatBytes(usedBytes)}`}
                 </span>
-              </div>
-
-              <p className="model-desc">{model.description}</p>
-              <div className="model-meta">
-                <span>支持语言：{model.languages}</span>
-                {model.note && <span>{model.note}</span>}
-              </div>
-
-              {installingNow && progress && (
-                <div className="model-progress" role="status" aria-live="polite">
-                  <ProgressBar value={progress.percent} minPercent={2} label={`${displayModelName(model)} 下载进度`} />
-                  <div className="model-progress-meta">
-                    <span>{progress.message}</span>
-                    <span>
-                      {progress.total_bytes > 0
-                        ? `${formatBytes(progress.downloaded_bytes)} / ${formatBytes(progress.total_bytes)}`
-                        : `${progress.completed_files}/${progress.total_files} 个文件`}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              <div className="model-actions">
-                {installingNow ? (
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={working}
-                    onClick={() => void run(model.id, () => api.cancelModelInstall(model.id), '正在取消安装')}
-                  >
-                    <X size={15} /> 取消安装
-                  </button>
-                ) : model.state === 'ready' ? (
-                  <>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={working}
-                      onClick={() => void run(model.id, () => api.verifyModel(model.id), '校验通过，模型可用')}
-                    >
-                      {working ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />} 校验
-                    </button>
-                    <button
-                      className="icon-button danger model-delete"
-                      type="button"
-                      disabled={working}
-                      onClick={() => void remove(model)}
-                      aria-label={`删除模型 ${model.name}`}
-                      title="删除模型"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </>
+                {missingPackage.length > 0 ? (
+                  <span className="model-group-state attention">
+                    缺少 {missingPackage.map((engine) => ENGINE_PACKAGE_NAMES[engine] ?? engine).join('、')}
+                  </span>
+                ) : allReady ? (
+                  <span className="model-group-state ready">已就绪</span>
                 ) : (
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={working}
-                    onClick={() => void run(model.id, () => api.downloadModel(model.id), `已开始下载 ${model.name}`)}
-                  >
-                    {working ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
-                    {model.state === 'partial' || model.state === 'broken' ? '重新下载' : '下载模型'}
-                  </button>
+                  <span className="model-group-state">可安装</span>
                 )}
               </div>
-            </article>
-          )
-        })}
-      </div>
+            </div>
+
+            <div className="model-list">
+              {groupModels.map((model) => (
+                <ModelRow
+                  key={model.id}
+                  model={model}
+                  isDefault={defaultModel === model.id}
+                  // 识别区里有两个引擎，不标的话分不清某个模型属于哪种识别模式
+                  showEngine={group.engines.length > 1}
+                  busy={busy === model.id}
+                  onVerify={() => void run(model.id, () => api.verifyModel(model.id), '校验通过，模型可用')}
+                  onDownload={() => void run(model.id, () => api.downloadModel(model.id), `已开始下载 ${model.name}`)}
+                  onCancelInstall={() => void run(model.id, () => api.cancelModelInstall(model.id), '正在取消安装')}
+                  onRemove={() => void remove(model)}
+                />
+              ))}
+            </div>
+          </section>
+        )
+      })}
 
       {storage && (
         <footer className="model-storage">

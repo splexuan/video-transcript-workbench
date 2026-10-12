@@ -1,9 +1,19 @@
-import { AudioLines, Check, Download, LoaderCircle, RefreshCw, Square, Trash2 } from 'lucide-react'
+import {
+  AudioLines,
+  Check,
+  Download,
+  LoaderCircle,
+  Mic,
+  RefreshCw,
+  Square,
+  Trash2,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { VoiceCloneModal } from '../components/VoiceCloneModal'
 import { api } from '../lib/api'
-import type { TtsConfig, TtsJob } from '../types'
+import type { TtsConfig, TtsJob, TtsVoice } from '../types'
 
 const ACTIVE: TtsJob['status'][] = ['pending', 'running', 'cancelling']
 
@@ -33,8 +43,9 @@ export function TtsPage() {
   const [config, setConfig] = useState<TtsConfig | null>(null)
   const [configError, setConfigError] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
+  const [voices, setVoices] = useState<TtsVoice[]>([])
   const [text, setText] = useState('')
-  const [voice, setVoice] = useState<number | null>(null)
+  const [voice, setVoice] = useState<string | null>(null)
   const [speed, setSpeed] = useState(1)
   const [job, setJob] = useState<TtsJob | null>(null)
   const [history, setHistory] = useState<TtsJob[]>([])
@@ -44,6 +55,9 @@ export function TtsPage() {
   const [installing, setInstalling] = useState<{ percent: number; message: string } | null>(null)
   const mounted = useRef(true)
 
+  /* ---- 音色克隆（弹窗） ---- */
+  const [cloneOpen, setCloneOpen] = useState(false)
+
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -51,16 +65,24 @@ export function TtsPage() {
     }
   }, [])
 
+  /** 音色清单与配置一起刷新：上传/删除音色后要立刻反映到下拉里。 */
+  const applyConfig = useCallback((next: TtsConfig) => {
+    setConfig(next)
+    setConfigError('')
+    setVoices(next.voices)
+    // 首次进入用设置里的默认音色；用户已经选过就尊重他的选择
+    setVoice((current) => {
+      if (current && next.voices.some((item) => item.id === current)) return current
+      return next.voice
+    })
+  }, [])
+
   useEffect(() => {
     let active = true
     api
       .ttsConfig()
       .then((next) => {
-        if (!active) return
-        setConfig(next)
-        setConfigError('')
-        // 首次进入用设置里的默认音色；用户已经选过就尊重他的选择（包括 sid 0）
-        setVoice((current) => current ?? next.voice)
+        if (active) applyConfig(next)
       })
       .catch((reason: Error) => {
         if (active) setConfigError(reason.message)
@@ -68,7 +90,7 @@ export function TtsPage() {
     return () => {
       active = false
     }
-  }, [reloadKey])
+  }, [reloadKey, applyConfig])
 
   // 历史列表只是辅助信息：取不到不打断主流程，用 key 触发重新拉取
   const [historyKey, setHistoryKey] = useState(0)
@@ -154,6 +176,24 @@ export function TtsPage() {
     }
   }
 
+  /** 音色清单变了（新建或删除）：重新拉配置，让下拉与弹窗同步。 */
+  const refreshVoices = useCallback(async () => {
+    const next = await api.ttsConfig()
+    if (!mounted.current) return null
+    applyConfig(next)
+    return next
+  }, [applyConfig])
+
+  /** 弹窗里保存成功：刷新音色清单，并直接把新音色选中，省得用户再选一次。 */
+  async function handleVoiceCreated(voiceId: string) {
+    const next = await refreshVoices()
+    if (!next) return
+    setCloneOpen(false)
+    setVoice(voiceId)
+    const created = next.voices.find((item) => item.id === voiceId)
+    setNotice(`音色「${created?.name ?? '新音色'}」已保存，可以直接合成了`)
+  }
+
   /** 模型没装时的下载入口：直接在这里装，不用来回切页。 */
   async function downloadModel() {
     const model = config?.model
@@ -198,21 +238,25 @@ export function TtsPage() {
     anchor.click()
   }
 
-  const voiceName = useMemo(() => {
-    if (!config || voice === null) return ''
-    for (const group of config.voice_groups) {
-      const hit = group.voices.find((item) => item.sid === voice)
-      if (hit) return hit.name
-    }
-    return ''
-  }, [config, voice])
+  const builtinVoices = useMemo(() => voices.filter((item) => item.builtin), [voices])
+  const customVoices = useMemo(() => voices.filter((item) => !item.builtin), [voices])
+  const selectedVoice = useMemo(
+    () => voices.find((item) => item.id === voice) ?? null,
+    [voices, voice],
+  )
+
+  /** 模型 id → 可读名。清单里找不到（装完又删了）就退回 id 本身，不要显示成空白。 */
+  const modelLabel = useCallback(
+    (id: string) => config?.models.find((item) => item.id === id)?.name ?? id,
+    [config],
+  )
 
   return (
     <div className="page tts-page">
       <header className="page-header">
         <div>
           <h1>语音合成</h1>
-          <p>把文案读成音频：本地 Kokoro 模型、CPU 推理，文本不出本机。</p>
+          <p>把文案读成音频：本地 ZipVoice 模型、CPU 推理，文本不出本机。音色由参考音频克隆而来。</p>
         </div>
       </header>
 
@@ -221,6 +265,42 @@ export function TtsPage() {
           {configError}
           <button className="text-button" type="button" onClick={() => setReloadKey((value) => value + 1)}>重试</button>
         </p>
+      )}
+
+      {/* 装好之后也要一直看得见当前用的是哪个模型：合成质量与速度都随它变，
+          而且换引擎版本后历史记录的音色不再可比，必须能从结果反推当时用的什么。 */}
+      {config && config.ready && (
+        <section className="panel tts-model-bar">
+          <span className="tts-model-label">当前模型</span>
+          {config.models.filter((item) => item.ready).length > 1 ? (
+            <select
+              className="tts-model-select"
+              aria-label="选择语音模型"
+              value={config.model?.id ?? ''}
+              onChange={async (event) => {
+                const next = event.target.value
+                try {
+                  await api.updateSettings({ tts_model: next })
+                  setNotice(`已切换到「${config.models.find((item) => item.id === next)?.name ?? next}」`)
+                  setReloadKey((value) => value + 1)
+                } catch (reason) {
+                  setError(reason instanceof Error ? reason.message : '切换模型失败')
+                }
+              }}
+            >
+              {config.models.filter((item) => item.ready).map((item) => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
+            </select>
+          ) : (
+            <strong>{config.model?.name}</strong>
+          )}
+          <small className="tts-model-note">
+            {config.models.filter((item) => item.ready).length > 1
+              ? 'fp32 人声细节更干净，但每开一个并行实例约占双倍内存'
+              : '只装了 int8 版；想要更干净的人声可在「设置 → 语音合成」里装 fp32 版'}
+          </small>
+        </section>
       )}
 
       {config && !config.ready && (
@@ -276,16 +356,23 @@ export function TtsPage() {
               <span>音色</span>
               <select
                 id="tts-voice"
-                value={voice ?? 0}
-                onChange={(event) => setVoice(Number(event.target.value))}
+                value={voice ?? ''}
+                onChange={(event) => setVoice(event.target.value)}
               >
-                {(config?.voice_groups ?? []).map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.voices.map((item) => (
-                      <option key={item.sid} value={item.sid}>{item.name}</option>
+                {builtinVoices.length > 0 && (
+                  <optgroup label="内置音色">
+                    {builtinVoices.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
                   </optgroup>
-                ))}
+                )}
+                {customVoices.length > 0 && (
+                  <optgroup label="我的音色">
+                    {customVoices.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </label>
             <label className="tts-control" htmlFor="tts-speed">
@@ -302,6 +389,13 @@ export function TtsPage() {
             </label>
           </div>
 
+          {selectedVoice && (
+            <details className="tts-voice-detail">
+              <summary>这段参考音频里说的是</summary>
+              <p>{selectedVoice.reference_text}</p>
+            </details>
+          )}
+
           <div className="tts-actions">
             <button
               className="primary-button"
@@ -317,7 +411,13 @@ export function TtsPage() {
                 <Square size={15} /> 取消
               </button>
             )}
-            {voiceName && <small className="tts-hint">音色 {voiceName}；语速越大越快。</small>}
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setCloneOpen(true)}
+            >
+              <Mic size={15} /> 音色克隆
+            </button>
           </div>
 
           {error && <p className="form-message error" role="alert">{error}</p>}
@@ -400,7 +500,9 @@ export function TtsPage() {
                         {item.duration > 0 ? ` · ${secondsLabel(item.duration)}` : ''}
                       </span>
                       <span className="tts-history-sub">
-                        音色 sid {item.voice} · {item.speed.toFixed(2)}×
+                        {/* 换过模型后音色不再可比，所以连模型一起标出来 */}
+                        {modelLabel(item.model_id)} · 音色 {voices.find((v) => v.id === item.voice)?.name ?? item.voice} ·{' '}
+                        {item.speed.toFixed(2)}×
                         {item.status === 'completed' && <Check size={12} />}
                       </span>
                     </button>
@@ -422,6 +524,15 @@ export function TtsPage() {
           </section>
         </aside>
       </div>
+
+      {cloneOpen && (
+        <VoiceCloneModal
+          onClose={() => setCloneOpen(false)}
+          onCreated={(voiceId) => void handleVoiceCreated(voiceId)}
+          onChanged={() => void refreshVoices()}
+          voices={voices}
+        />
+      )}
     </div>
   )
 }

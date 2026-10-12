@@ -856,6 +856,146 @@ button:disabled {
   color: var(--text-muted);
   font-size: var(--text-2xs);
 }
+/* 参考音频的原文：默认折叠，它是「为什么必须逐字一致」的凭据，不是每次都要看 */
+.tts-voice-detail {
+  margin-top: 12px;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.tts-voice-detail summary {
+  cursor: pointer;
+  color: var(--primary);
+}
+.tts-voice-detail p {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--surface-sunken, transparent);
+  line-height: 1.7;
+}
+/* 上传自定义音色 */
+.tts-upload {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface-sunken, transparent);
+}
+.tts-upload-lead {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.tts-tips {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+.tts-field {
+  display: grid;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+.tts-field > span {
+  font-weight: 600;
+}
+.tts-field input[type='text'],
+.tts-field textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface, transparent);
+  color: inherit;
+  font: inherit;
+}
+.tts-field textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+.tts-field small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+/* 音色克隆弹窗内的「我的音色」管理区 */
+.tts-mine {
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.tts-mine-lead {
+  margin: 8px 0 8px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.tts-mine ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.tts-mine li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  font-size: var(--text-sm);
+}
+.tts-mine li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 当前模型条：装好之后也要一直看得见用的是哪个模型，并能就地切换 */
+.tts-model-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: var(--space-xl);
+  padding: 12px 18px;
+}
+.tts-model-label {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.tts-model-select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface, transparent);
+  color: inherit;
+  font: inherit;
+}
+.tts-model-note {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+/* 音色克隆弹窗 */
+.tts-clone {
+  display: grid;
+  gap: 14px;
+}
+.tts-preview {
+  display: grid;
+  gap: 4px;
+}
+.tts-preview small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.form-message.warning {
+  color: var(--warning);
+}
 @keyframes modal-fade {
   from {
     opacity: 0;
@@ -2900,44 +3040,77 @@ span.task-exec-cover {
   flex: 0 0 auto;
   white-space: nowrap;
 }
-.engine-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
+/* 模型按用途分区。分组标题承担「状态 / 用途 / 体积」的交代，
+   所以不再另起一排引擎概览卡片——那会把同一件事说两遍。 */
+.model-group + .model-group {
+  margin-top: 26px;
 }
-.engine-pill {
+.model-group-head {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 13px 15px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
 }
-.engine-icon {
+.model-group-icon {
   display: grid;
   place-items: center;
   width: 34px;
   height: 34px;
+  flex: 0 0 auto;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   background: var(--surface-hover);
 }
-.engine-icon.ready {
+.model-group-icon.ready {
   color: var(--success);
   background: var(--success-soft);
 }
-.engine-pill strong,
-.engine-pill small {
+.model-group-title {
+  flex: 1;
+  min-width: 0;
+}
+.model-group-title h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+.model-group-title small {
   display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
 }
-.engine-pill strong {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+.model-group-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
 }
-.engine-pill small {
-  margin-top: 4px;
+.model-group-state {
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface-hover);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+.model-group-state.ready {
+  color: var(--success);
+  background: var(--success-soft);
+}
+.model-group-state.attention {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+/* 同一区里有两个引擎时才出现的标签（识别区：极速文本 / 精准时间轴） */
+.model-engine-tag {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
   color: var(--text-muted);
   font-size: var(--text-2xs);
 }
@@ -4645,19 +4818,18 @@ button.timecode:hover:not(:disabled) {
   .connector-more summary {
     min-height: 44px;
   }
-  .engine-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .model-group-head {
+    /* 窄屏放不下「标题 + 概览」一行，概览换到标题下面 */
+    flex-wrap: wrap;
+    row-gap: 8px;
   }
-  .engine-pill {
-    align-items: flex-start;
-    padding: 11px;
+  .model-group-meta {
+    width: 100%;
+    padding-left: 46px;
   }
-  .engine-icon {
+  .model-group-icon {
     width: 30px;
     height: 30px;
-  }
-  .engine-pill strong {
-    font-size: var(--text-xs);
   }
   .model-manager {
     padding: 20px;

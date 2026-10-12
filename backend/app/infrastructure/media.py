@@ -111,29 +111,39 @@ def probe_media(path: Path) -> MediaInfo:
     )
 
 
-def convert_to_wav(source: Path, destination: Path) -> Path:
+def convert_to_wav(source: Path, destination: Path, max_seconds: float | None = None) -> Path:
+    """转成 16kHz 单声道 WAV（识别引擎的输入格式）。
+
+    `max_seconds` 给「只要前一段」的场景用（如音色克隆的参考音频只取开头一小段）：
+    转换时就截断，转写出来的文字与最终保存的音频才是同一段，否则两者会对不上。
+    """
+
     ffmpeg = find_tool("ffmpeg")
     if not ffmpeg:
         raise MediaToolError("未找到 FFmpeg，请先安装或配置 FFmpeg")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(source),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-sample_fmt",
+        "s16",
+    ]
+    if max_seconds is not None:
+        command += ["-t", f"{max_seconds:.3f}"]
+    command.append(str(destination))
+
     result = subprocess.run(
-        [
-            ffmpeg,
-            "-y",
-            "-v",
-            "error",
-            "-i",
-            str(source),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-sample_fmt",
-            "s16",
-            str(destination),
-        ],
+        command,
         capture_output=True,
         text=True,
         encoding="utf-8",

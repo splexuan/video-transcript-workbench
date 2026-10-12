@@ -103,21 +103,31 @@ def missing_paths(spec: ModelSpec, directory: Path) -> list[str]:
 
     if not spec.archive:
         return []
-    return [name for name in spec.required_paths if not (directory / name).exists()]
+    missing = [name for name in spec.required_paths if not (directory / name).exists()]
+    # required_any 的每组至少要有一个，否则整组报缺（用的是可读的名字而不是原始文件名）
+    missing += [
+        " / ".join(group)
+        for group in spec.required_any
+        if not any((directory / name).exists() for name in group)
+    ]
+    return missing
 
 
 def archive_pending(spec: ModelSpec, directory: Path) -> Path | None:
     """归档型模型：包还在、但没解压完（下载完就中断了）时返回包路径。
 
-    这样重新点下载时不必再下一遍 147 MB，直接解压即可。
+    这样重新点下载时不必再下一遍上百 MB，直接解压即可。
+
+    只看 files[0]（真正的归档包）：files[1:] 是声码器这类附属文件，它们由普通文件槽位下载，
+    留在目录里不代表「整包已下好」，把它们算进来会让「缺模型文件」被误报成
+    「安装包已下载，重新点下载即可继续解压」——用户点了也解压不出缺的文件。
     """
 
     if not spec.archive:
         return None
-    for slot in spec.files:
-        candidate = directory / slot.name
-        if candidate.is_file() and missing_paths(spec, directory):
-            return candidate
+    candidate = directory / spec.files[0].name
+    if candidate.is_file() and missing_paths(spec, directory):
+        return candidate
     return None
 
 
@@ -125,6 +135,28 @@ def is_complete(spec: ModelSpec, directory: Path) -> bool:
     if spec.archive:
         return all((directory / name).exists() for name in spec.required_paths)
     return all(slot_file(directory, slot) is not None for slot in spec.files)
+
+
+def extra_slots(spec: ModelSpec) -> tuple[ModelFile, ...]:
+    """归档之外还要单独下载的附属文件。
+
+    归档型规格的 files[0] 是官方 tar 包；files[1:] 不在包里（如 ZipVoice 的声码器单独发布），
+    要在解压后单独下到同一个目录——声码器与模型版本绑定，分开放容易装错版本。
+    """
+
+    return spec.files[1:] if spec.archive else ()
+
+
+def archive_extracted(spec: ModelSpec, directory: Path) -> bool:
+    """归档型：tar 包是否已经解开（只看包内该有的文件，不含附属文件）。
+
+    用来区分「整包都要重下」与「只差附属文件」——后者不该让用户再下一遍上百 MB 的模型。
+    """
+
+    extras = {slot.name for slot in extra_slots(spec)}
+    return all(
+        (directory / name).exists() for name in spec.required_paths if name not in extras
+    )
 
 
 def package_available(engine: ModelEngine | str) -> bool:
@@ -521,9 +553,10 @@ class ModelInstaller:
         )
 
     def _install_archive(self, spec: ModelSpec, task: _Task, destination: Path) -> None:
-        """归档型安装：下载官方 tar 包 → 解压到模型目录 → 删掉包。
+        """归档型安装：下载官方 tar 包 → 解压到模型目录 → 删掉包 → 补下附属文件。
 
         下载完但没解压完就断了的话，包还留着，下次点「下载」直接从解压续上。
+        模型已解压、只差附属文件（如声码器）时直接补那一个，不重下整包。
         """
 
         slot = spec.files[0]
@@ -534,34 +567,39 @@ class ModelInstaller:
             task.report(status="completed", percent=100, message="模型已就绪，无需重新下载")
             return
 
-        if target.is_file() and target.stat().st_size in slot.accepted_sizes:
-            task.report(
-                downloaded_bytes=target.stat().st_size,
-                total_bytes=known_total or target.stat().st_size,
-                file_name=slot.name,
-                completed_files=1,
-                percent=95,
-                message="安装包已存在，直接解压",
-            )
+        if archive_extracted(spec, destination):
+            task.report(message="模型已就绪，正在补齐附属文件")
         else:
-            task.report(file_name=slot.name, message=f"正在下载 {slot.name}")
-            written = self._fetch_with_fallback(spec, task, slot, target)
-            task.report(
-                downloaded_bytes=written,
-                total_bytes=known_total or written,
-                completed_files=1,
-                message="下载完成，正在解压",
-            )
+            if target.is_file() and target.stat().st_size in slot.accepted_sizes:
+                task.report(
+                    downloaded_bytes=target.stat().st_size,
+                    total_bytes=known_total or target.stat().st_size,
+                    file_name=slot.name,
+                    completed_files=1,
+                    percent=95,
+                    message="安装包已存在，直接解压",
+                )
+            else:
+                task.report(file_name=slot.name, message=f"正在下载 {slot.name}")
+                written = self._fetch_with_fallback(spec, task, slot, target)
+                task.report(
+                    downloaded_bytes=written,
+                    total_bytes=known_total or written,
+                    completed_files=1,
+                    message="下载完成，正在解压",
+                )
 
-        if task.cancel.is_set():
-            raise _Cancelled("下载已取消")
+            if task.cancel.is_set():
+                raise _Cancelled("下载已取消")
 
-        # bz2 解压 147 MB 的包要几十秒，进度先顶到 99 并说清楚在做什么，别让界面看着像卡住。
-        task.report(status="running", percent=99, message="正在解压模型，请稍候")
-        _extract_archive(target, destination)
-        target.unlink(missing_ok=True)
-        for leftover in destination.glob(f"{target.name}*{PART_SUFFIX}"):
-            leftover.unlink(missing_ok=True)
+            # bz2 解压上百 MB 的包要几十秒，进度先顶到 99 并说清楚在做什么，别让界面看着像卡住。
+            task.report(status="running", percent=99, message="正在解压模型，请稍候")
+            _extract_archive(target, destination)
+            target.unlink(missing_ok=True)
+            for leftover in destination.glob(f"{target.name}*{PART_SUFFIX}"):
+                leftover.unlink(missing_ok=True)
+
+        self._fetch_extras(spec, task, destination)
 
         # 标记只记文件：目录（如 espeak-ng-data）的存在性由 required_paths 判定，
         # 记进去反而会被 inspect 当成「文件不见了」而误报损坏。
@@ -572,6 +610,19 @@ class ModelInstaller:
         }
         _write_marker(spec, destination, "download", resolved)
         task.report(status="completed", percent=100, message="模型安装完成")
+
+    def _fetch_extras(self, spec: ModelSpec, task: _Task, destination: Path) -> None:
+        """补齐归档之外的文件（ZipVoice 的声码器等）：已存在且大小对得上就跳过。"""
+
+        for extra in extra_slots(spec):
+            if task.cancel.is_set():
+                raise _Cancelled("下载已取消")
+            target = destination / extra.name
+            if target.is_file() and target.stat().st_size in extra.accepted_sizes:
+                continue
+            task.report(percent=99, file_name=extra.name, message=f"正在下载 {extra.name}")
+            self._fetch_with_fallback(spec, task, extra, target)
+            task.report(message=f"{extra.name} 下载完成")
 
     def _fetch_with_fallback(self, spec: ModelSpec, task: _Task, slot: ModelFile, target: Path) -> int:
         errors: list[str] = []

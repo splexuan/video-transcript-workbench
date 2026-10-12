@@ -10,6 +10,7 @@ from app.api.credentials import router as credentials_router
 from app.api.models import router as models_router
 from app.api.router import router
 from app.api.tts import router as tts_router
+from app.application import tts_jobs
 from app.application.worker import local_worker
 from app.config import settings
 from app.infrastructure.database import init_database
@@ -18,6 +19,9 @@ from app.infrastructure.database import init_database
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_database()
+    # 合成记录只存在内存里，音频却落盘；启动时清掉上次会话的遗留，
+    # 否则每次重启都会留下一批再也引用不到的文件。
+    tts_jobs.manager.sweep_orphans()
     if settings.worker_enabled:
         local_worker.start()
     try:

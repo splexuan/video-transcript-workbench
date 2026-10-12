@@ -75,6 +75,11 @@ class ModelSpec:
     # 所以「是否就绪」不看 files，只看解压后的 required_paths 是否齐全。
     archive: bool = False
     required_paths: tuple[str, ...] = ()
+    # 「至少要存在其一」的文件组，每组缺了整组都不算就绪。
+    # required_paths 是「全都要有」，表达不了「不同精度版本文件名不同但必须有其中一个」这种情况
+    # （如 ZipVoice 的 encoder.int8.onnx / encoder.onnx）——不检查就会把缺核心模型的目录
+    # 判成已就绪，直到真正合成时才报「缺少模型文件」。
+    required_any: tuple[tuple[str, ...], ...] = ()
 
     @property
     def approx_bytes(self) -> int:

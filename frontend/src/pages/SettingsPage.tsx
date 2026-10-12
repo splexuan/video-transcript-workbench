@@ -44,7 +44,7 @@ export function SettingsPage() {
   const [aiCatalog, setAiCatalog] = useState<AiProviderCatalog | null>(null)
   const [aiError, setAiError] = useState('')
   const [aiReloadKey, setAiReloadKey] = useState(0)
-  // 语音合成：模型与音色清单（音色来自 Kokoro 的说话人表）
+  // 语音合成：模型与音色清单（音色来自 ZipVoice 的参考音频）
   const [ttsConfig, setTtsConfig] = useState<TtsConfig | null>(null)
 
   /** 本地与同步副本一起写，避免两处口径不一致。 */
@@ -316,7 +316,7 @@ export function SettingsPage() {
           <div className="setting-row">
             <span>
               <label htmlFor="tts-model"><strong>默认语音模型</strong></label>
-              <small>把文案读成音频的本地模型（Kokoro，CPU 推理）。没装的话到「语音合成」页或「模型管理」下载，约 140 MB。</small>
+              <small>把文案读成音频的本地模型（ZipVoice，CPU 推理）。没装的话到「语音合成」页或「模型管理」下载，约 156 MB。</small>
             </span>
             <div className="setting-control">
               <select id="tts-model" value={settings.tts_model} onChange={(event) => save({ tts_model: event.target.value })}>
@@ -333,24 +333,29 @@ export function SettingsPage() {
               )}
             </div>
           </div>
-          {ttsConfig && ttsConfig.voice_groups.length > 0 && (
+          {ttsConfig && ttsConfig.voices.length > 0 && (
             <label className="setting-row" htmlFor="tts-voice">
               <span>
                 <strong>默认音色</strong>
-                <small>Kokoro 的中文音色共 100 个（女声 55 / 男声 45）；先合成一段试听再挑更稳。语速在「语音合成」页里调。</small>
+                <small>音色来自一段参考音频（ZipVoice 零样本克隆）。内置音色随模型发布；用自己的声音，去「语音合成」页上传参考音频。语速在那里调。</small>
               </span>
               <select
                 id="tts-voice"
                 value={settings.tts_voice ?? ttsConfig.voice}
-                onChange={(event) => save({ tts_voice: Number(event.target.value) })}
+                onChange={(event) => save({ tts_voice: event.target.value })}
               >
-                {ttsConfig.voice_groups.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.voices.map((item) => (
-                      <option key={item.sid} value={item.sid}>{item.name}</option>
+                <optgroup label="内置音色">
+                  {ttsConfig.voices.filter((item) => item.builtin).map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </optgroup>
+                {ttsConfig.voices.some((item) => !item.builtin) && (
+                  <optgroup label="我的音色">
+                    {ttsConfig.voices.filter((item) => !item.builtin).map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
                   </optgroup>
-                ))}
+                )}
               </select>
             </label>
           )}

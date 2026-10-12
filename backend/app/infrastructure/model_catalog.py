@@ -77,29 +77,34 @@ def _punctuation_files() -> tuple[ModelFile, ...]:
     )
 
 
-# 语音合成：Kokoro 官方只发 tar.bz2 安装包（里面有 espeak-ng-data/ 这类子目录与几百个文件），
-# 逐文件下载既不现实也没必要，所以走「归档型」安装：下载后自动解压（见 model_store）。
-KOKORO_RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
-KOKORO_V1_1_PACKAGE = "kokoro-int8-multi-lang-v1_1.tar.bz2"
-KOKORO_V1_1_BYTES = 147_031_220
-# 解压后必须存在的路径：判「装好了没有」只看这几项（含一个目录）。
-KOKORO_V1_1_PATHS = (
-    "model.int8.onnx",
-    "voices.bin",
+# 语音合成：ZipVoice 是零样本音色克隆模型，用一段参考音频克隆出说话人。
+# 官方同样只发 tar.bz2 安装包（含 espeak-ng-data/ 这类子目录与几百个文件），逐文件下载既不现实
+# 也没必要，所以走「归档型」安装：下载后自动解压（见 model_store）。
+ZIPVOICE_RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+# 声码器（Vocos）单独发布，不在 tar 包里；它与模型版本绑定，因此作为「附属文件」
+# 跟着模型一起装到同一个目录，由 model_store 在解压后单独下载（files 的第二项起）。
+ZIPVOICE_VOCODER_RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models"
+
+ZIPVOICE_INT8_PACKAGE = "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"
+ZIPVOICE_INT8_BYTES = 109_162_785
+ZIPVOICE_FP32_PACKAGE = "sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia.tar.bz2"
+ZIPVOICE_FP32_BYTES = 477_800_463
+ZIPVOICE_VOCODER_FILE = "vocos_24khz.onnx"
+ZIPVOICE_VOCODER_BYTES = 54_157_409
+
+# 两个精度版本只差 encoder/decoder 的文件名（*.int8.onnx 与 *.onnx），而具体名字随上游发布
+# 可能变，所以这两项用 required_any 表达「每组至少存在其一」；其余文件两边同名，走必需路径。
+# encoder/decoder 是核心模型——不检查的话，缺了它照样被判成「已就绪」，要等真正合成时才报错。
+ZIPVOICE_REQUIRED_PATHS = (
     "tokens.txt",
-    "lexicon-zh.txt",
+    "lexicon.txt",
     "espeak-ng-data",
+    "test_wavs/leijun-1.wav",
+    ZIPVOICE_VOCODER_FILE,
 )
-# 同一个模型的非量化版：音质明显更好，代价是下载体积与常驻内存都约为 int8 的 2.5 倍。
-KOKORO_FP32_PACKAGE = "kokoro-multi-lang-v1_1.tar.bz2"
-KOKORO_FP32_BYTES = 364_816_464
-# 两个精度版本的模型文件名不同（model.onnx / model.int8.onnx），所以完整性只查两边
-# 都有的这几个；真正用哪个文件由 tts_engine 在构造时挑，挑不到会明确报错。
-KOKORO_FP32_PATHS = (
-    "voices.bin",
-    "tokens.txt",
-    "lexicon-zh.txt",
-    "espeak-ng-data",
+ZIPVOICE_REQUIRED_ANY = (
+    ("encoder.int8.onnx", "encoder.onnx"),
+    ("decoder.int8.onnx", "decoder.onnx"),
 )
 
 WHISPER_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
@@ -167,47 +172,50 @@ def _build_catalog() -> dict[str, ModelSpec]:
         note="只在点「智能分句」时用到，不参与语音识别；不安装则字幕文案无法自动整理标点。",
         requires_package="sherpa-onnx",
     )
-    catalog["kokoro-int8-multi-lang-v1_1"] = ModelSpec(
-        id="kokoro-int8-multi-lang-v1_1",
-        name="Kokoro 82M v1.1（中文语音合成）",
-        engine=ModelEngine.TTS,
-        tier=ModelTier.UTILITY,
-        description="Kokoro-82M v1.1 中英双语量化模型，100 个中文音色，把文案读成音频。",
-        files=(
-            ModelFile(
-                name=KOKORO_V1_1_PACKAGE,
-                urls=(f"{KOKORO_RELEASE}/{KOKORO_V1_1_PACKAGE}",),
-                size=KOKORO_V1_1_BYTES,
-            ),
+    for package, package_bytes, label, recommended, note in (
+        (
+            ZIPVOICE_INT8_PACKAGE,
+            ZIPVOICE_INT8_BYTES,
+            "ZipVoice 蒸馏版 int8（语音合成）",
+            True,
+            "推荐档。约 104 MB 模型 + 51 MB 声码器；CPU 上 RTF 约 0.5，12 核可并行 4 路。",
         ),
-        languages="中文 / 英文",
-        recommended=True,
-        note="官方以 tar.bz2 发布（含音素数据），下载后自动解压；约 147 MB，解压后约 183 MB。",
-        requires_package="sherpa-onnx",
-        archive=True,
-        required_paths=KOKORO_V1_1_PATHS,
-    )
-    catalog["kokoro-multi-lang-v1_1"] = ModelSpec(
-        id="kokoro-multi-lang-v1_1",
-        name="Kokoro 82M v1.1 高精度版（语音合成）",
-        engine=ModelEngine.TTS,
-        tier=ModelTier.UTILITY,
-        description="Kokoro-82M v1.1 的非量化版本，音色与 int8 版相同，音质明显更干净。",
-        files=(
-            ModelFile(
-                name=KOKORO_FP32_PACKAGE,
-                urls=(f"{KOKORO_RELEASE}/{KOKORO_FP32_PACKAGE}",),
-                size=KOKORO_FP32_BYTES,
-            ),
+        (
+            ZIPVOICE_FP32_PACKAGE,
+            ZIPVOICE_FP32_BYTES,
+            "ZipVoice 蒸馏版 fp32（语音合成）",
+            False,
+            "非量化版，人声细节更干净。约 455 MB 模型 + 51 MB 声码器；"
+            + "每个合成实例常驻内存约为 int8 的 2 倍，12 核开 4 路时合计接近 2GB。",
         ),
-        languages="中文 / 英文",
-        recommended=False,
-        note="音质更干净，代价是体积与内存：每个合成实例常驻约 430MB（int8 版约 240MB），"
-        "12 核开 4 个实例时合计约 1.8GB；内存较小的机器建议合成时先关掉识别任务。",
-        requires_package="sherpa-onnx",
-        archive=True,
-        required_paths=KOKORO_FP32_PATHS,
-    )
+    ):
+        spec_id = package.replace(".tar.bz2", "")
+        catalog[spec_id] = ModelSpec(
+            id=spec_id,
+            name=label,
+            engine=ModelEngine.TTS,
+            tier=ModelTier.UTILITY,
+            description="ZipVoice 零样本音色克隆模型：给一段参考音频，克隆出该说话人的声音朗读文案。",
+            files=(
+                ModelFile(
+                    name=package,
+                    urls=(f"{ZIPVOICE_RELEASE}/{package}",),
+                    size=package_bytes,
+                ),
+                ModelFile(
+                    name=ZIPVOICE_VOCODER_FILE,
+                    urls=(f"{ZIPVOICE_VOCODER_RELEASE}/{ZIPVOICE_VOCODER_FILE}",),
+                    size=ZIPVOICE_VOCODER_BYTES,
+                ),
+            ),
+            languages="中文 / 英文",
+            recommended=recommended,
+            note=note,
+            requires_package="sherpa-onnx",
+            archive=True,
+            required_paths=ZIPVOICE_REQUIRED_PATHS,
+            required_any=ZIPVOICE_REQUIRED_ANY,
+        )
     return catalog
 
 

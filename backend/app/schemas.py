@@ -233,21 +233,35 @@ class SettingPatch(BaseModel):
     ai_model: str | None = Field(default=None, max_length=128)
     # Codex 出网用的代理（本机可在「设置 - AI 驱动」里填）；留空走系统默认
     ai_proxy: str | None = Field(default=None, max_length=500)
-    # 「语音合成」默认用的模型与音色（音色是 Kokoro 的说话人 id）；留空用引擎默认
+    # 「语音合成」默认用的模型与音色（音色 id 是 ZipVoice 的参考音频标识）；留空用引擎默认
     tts_model: str | None = Field(default=None, max_length=64)
-    tts_voice: int | None = Field(default=None, ge=0, le=200)
+    tts_voice: str | None = Field(default=None, max_length=64)
 
 
 class TtsVoiceItem(BaseModel):
-    """一个音色：sid 是 Kokoro 的说话人编号，name 是官方音色名。"""
+    """一个音色。ZipVoice 是零样本克隆，音色来自一段参考音频，id 即这段音频的标识。"""
 
-    sid: int
+    id: str
     name: str
+    # 这段参考音频里逐字说出的内容：必须与音频一致，否则克隆出的音色会明显变差
+    reference_text: str
+    builtin: bool
 
 
-class TtsVoiceGroup(BaseModel):
-    label: str
-    voices: list[TtsVoiceItem]
+class TtsVoiceCreate(BaseModel):
+    """上传自定义音色时的表单部分（音频本身走 multipart 文件字段）。"""
+
+    name: str = Field(min_length=1, max_length=40)
+    reference_text: str = Field(min_length=1, max_length=500)
+
+
+class TtsTranscribeRead(BaseModel):
+    """参考音频的自动转写结果：文字给用户核对，时长用于提示是否截断过。"""
+
+    text: str
+    seconds: float
+    # 超过可用的参考长度时会被截断，前端要如实告知，否则文字与音频对不上
+    truncated: bool = False
 
 
 class TtsModelOption(BaseModel):
@@ -265,12 +279,11 @@ class TtsConfigRead(BaseModel):
     message: str
     model: TtsModelOption | None
     models: list[TtsModelOption]
-    voice_groups: list[TtsVoiceGroup]
-    voice: int
+    voices: list[TtsVoiceItem]
+    voice: str
     speed: float
     max_chars: int
-    # 前端据此估算等待时间：每秒音频约几个字（实测中文）、合成耗时与音频时长之比，
-    # 以及这台机器会把句子摊到几个实例上并行合成（核数少时为 1，即原来的串行）
+    # 语速与音质的关系：int8 版实测 RTF 约 0.5，多实例并行还能再摊薄
     chars_per_second: float
     realtime_factor: float
     parallel_lanes: int
@@ -280,7 +293,7 @@ class TtsSynthesizeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
     # 留空用设置里的默认模型/音色
     model_id: str | None = Field(default=None, max_length=64)
-    voice: int | None = Field(default=None, ge=0, le=200)
+    voice: str | None = Field(default=None, max_length=64)
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
 
 
@@ -292,7 +305,7 @@ class TtsJobRead(BaseModel):
     message: str
     percent: int
     model_id: str
-    voice: int
+    voice: str
     speed: float
     chars: int
     sentences_done: int

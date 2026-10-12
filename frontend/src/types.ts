@@ -214,21 +214,30 @@ export interface AppSettings {
   ai_proxy: string
   /** 「语音合成」默认使用的模型 id；留空表示跟随引擎默认。 */
   tts_model: string
-  /** 默认音色（Kokoro 说话人 id）；null 表示用引擎默认。 */
-  tts_voice: number | null
+  /** 默认音色（ZipVoice 参考音频的 id）；null 表示用引擎默认。 */
+  tts_voice: string | null
 }
 
 /* ---------- 语音合成 ---------- */
 
-/** 一个音色：sid 是 Kokoro 的说话人编号，name 是官方音色名（如 zf_001）。 */
+/**
+ * 一个音色。ZipVoice 是零样本克隆，音色来自一段参考音频，id 即这段音频的标识——
+ * 内置音色随模型发布，自定义音色由用户上传后出现在这里。
+ */
 export interface TtsVoice {
-  sid: number
+  id: string
   name: string
+  /** 这段参考音频里逐字说出的内容，必须与音频一致，否则克隆出的音色会明显变差。 */
+  reference_text: string
+  /** 内置音色不可删除。 */
+  builtin: boolean
 }
 
-export interface TtsVoiceGroup {
-  label: string
-  voices: TtsVoice[]
+/** 「音色克隆」里自动转写的结果：文字给用户核对，`truncated` 表示参考音频只取了开头一段。 */
+export interface TtsTranscribeResult {
+  text: string
+  seconds: number
+  truncated: boolean
 }
 
 export interface TtsModelOption {
@@ -244,13 +253,13 @@ export interface TtsConfig {
   message: string
   model: TtsModelOption | null
   models: TtsModelOption[]
-  voice_groups: TtsVoiceGroup[]
-  voice: number
+  voices: TtsVoice[]
+  voice: string
   speed: number
   max_chars: number
   /** 估算用：每秒音频约几个字（实测中文）。 */
   chars_per_second: number
-  /** 估算用：单实例合成耗时与音频时长之比（实测 CPU ≈ 0.95）。 */
+  /** 估算用：单实例合成耗时与音频时长之比（实测 int8 版 CPU ≈ 0.5）。 */
   realtime_factor: number
   /** 这台机器会把句子摊到几个实例上并行合成（核数少时为 1）。 */
   parallel_lanes: number
@@ -264,7 +273,7 @@ export interface TtsJob {
   message: string
   percent: number
   model_id: string
-  voice: number
+  voice: string
   speed: number
   chars: number
   sentences_done: number

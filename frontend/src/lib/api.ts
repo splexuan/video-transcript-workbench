@@ -20,6 +20,8 @@ import type {
   Page,
   PolishedText,
   RecognitionModel,
+  TtsConfig,
+  TtsJob,
 } from '../types'
 
 /** 拼查询串；空值跳过，数组展开成重复参数（后端的 ids 用重复参数收）。 */
@@ -172,6 +174,19 @@ export const api = {
   /** 用所选的本机驱动（WorkBuddy / Codex）跑一次 AI 总结；DeepSeek 由前端跳网页完成。 */
   aiSummarize: (payload: { title: string; text: string; provider?: AiProviderType; model?: string }) =>
     request<AiSummaryResult>('/api/ai/summarize', { method: 'POST', body: JSON.stringify(payload) }),
+  /** 语音合成页的配置：可选模型与音色、当前选择、估算依据。 */
+  ttsConfig: () => request<TtsConfig>('/api/tts'),
+  /** 提交合成任务（长文本要几分钟，返回后轮询 ttsJob）。 */
+  createTtsJob: (payload: { text: string; voice?: number; speed?: number; model_id?: string }) =>
+    request<TtsJob>('/api/tts/jobs', { method: 'POST', body: JSON.stringify(payload) }),
+  ttsJobs: () => request<TtsJob[]>('/api/tts/jobs'),
+  ttsJob: (id: string) => request<TtsJob>(`/api/tts/jobs/${id}`),
+  cancelTtsJob: (id: string) => request<TtsJob>(`/api/tts/jobs/${id}/cancel`, { method: 'POST' }),
+  deleteTtsJob: (id: string) =>
+    request<{ id: string; removed: boolean }>(`/api/tts/jobs/${id}`, { method: 'DELETE' }),
+  /** 音频地址：播放用 inline，下载加 download=1（后端按它决定 Content-Disposition）。 */
+  ttsAudioUrl: (id: string, format: 'wav' | 'mp3' = 'wav', download = false) =>
+    `/api/tts/jobs/${id}/audio?format=${format}${download ? '&download=1' : ''}`,
   models: () => request<ModelCatalog>('/api/models'),
   downloadModel: (id: string) =>
     request<InstallProgress>(`/api/models/${id}/download`, { method: 'POST' }),

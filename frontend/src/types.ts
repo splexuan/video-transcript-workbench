@@ -212,6 +212,71 @@ export interface AppSettings {
   ai_model: string
   /** Codex 出网用的代理（本机设置）；留空走系统默认。 */
   ai_proxy: string
+  /** 「语音合成」默认使用的模型 id；留空表示跟随引擎默认。 */
+  tts_model: string
+  /** 默认音色（Kokoro 说话人 id）；null 表示用引擎默认。 */
+  tts_voice: number | null
+}
+
+/* ---------- 语音合成 ---------- */
+
+/** 一个音色：sid 是 Kokoro 的说话人编号，name 是官方音色名（如 zf_001）。 */
+export interface TtsVoice {
+  sid: number
+  name: string
+}
+
+export interface TtsVoiceGroup {
+  label: string
+  voices: TtsVoice[]
+}
+
+export interface TtsModelOption {
+  id: string
+  name: string
+  state: ModelState
+  ready: boolean
+  approx_bytes: number
+}
+
+export interface TtsConfig {
+  ready: boolean
+  message: string
+  model: TtsModelOption | null
+  models: TtsModelOption[]
+  voice_groups: TtsVoiceGroup[]
+  voice: number
+  speed: number
+  max_chars: number
+  /** 估算用：每秒音频约几个字（实测中文）。 */
+  chars_per_second: number
+  /** 估算用：单实例合成耗时与音频时长之比（实测 CPU ≈ 0.95）。 */
+  realtime_factor: number
+  /** 这台机器会把句子摊到几个实例上并行合成（核数少时为 1）。 */
+  parallel_lanes: number
+}
+
+export type TtsJobStatus = 'pending' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled'
+
+export interface TtsJob {
+  id: string
+  status: TtsJobStatus
+  message: string
+  percent: number
+  model_id: string
+  voice: number
+  speed: number
+  chars: number
+  sentences_done: number
+  sentences_total: number
+  /** 生成音频的时长（秒）与本次合成耗时（秒）。 */
+  duration: number
+  elapsed: number
+  error: string | null
+  /** 完成后才有：`/api/tts/jobs/{id}/audio`。 */
+  audio_url: string | null
+  created_at: number
+  updated_at: number
 }
 
 /** AI 驱动：deepseek 是浏览器驱动（跳网页），其余是本机登录的引擎。 */
@@ -276,8 +341,11 @@ export interface InstallProgress {
 export interface RecognitionModel {
   id: string
   name: string
-  /** punctuation 是辅助模型（标点恢复），不参与语音识别，只服务「智能分句」。 */
-  engine: 'sensevoice' | 'faster_whisper' | 'punctuation'
+  /**
+   * punctuation 是辅助模型（标点恢复），不参与语音识别，只服务「智能分句」；
+   * tts 是把文案读成音频的语音合成模型。
+   */
+  engine: 'sensevoice' | 'faster_whisper' | 'punctuation' | 'tts'
   tier: 'fast' | 'accurate' | 'utility'
   description: string
   languages: string
@@ -295,7 +363,7 @@ export interface RecognitionModel {
 }
 
 export interface EngineStatus {
-  engine: 'sensevoice' | 'faster_whisper' | 'punctuation'
+  engine: 'sensevoice' | 'faster_whisper' | 'punctuation' | 'tts'
   package_ready: boolean
   model_ready: boolean
   ready: boolean

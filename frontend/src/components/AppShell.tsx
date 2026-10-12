@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Cable,
   Cpu,
   FileText,
@@ -18,9 +19,9 @@ import { useScrollMemory } from '../lib/scrollMemory'
 import type { AppSettings } from '../types'
 
 /**
- * 导航分两组：上面三个是每天都要走的「提取 → 校对 → 看进度」，
- * 下面三个是装好就很少再动的配置。原来六项平铺，
- * 新用户看不出哪些是主流程、哪些只是配置。
+ * 导航分三组：上面三个是每天都要走的「提取 → 校对 → 看进度」，
+ * 中间是拿到文案之后的创作能力，下面三个是装好就很少再动的配置。
+ * 原来六项平铺，新用户看不出哪些是主流程、哪些只是配置。
  *
  * 「工作台」原先用加号图标，和下面的「新建提取」按钮撞在一起：
  * 同一个图标既表示页面又表示动作，点哪个都像要新建任务。
@@ -33,6 +34,12 @@ const navigation = [
       { to: '/', label: '工作台', icon: House },
       { to: '/library', label: '文案库', icon: Library },
       { to: '/jobs', label: '任务队列', icon: ListTodo },
+    ],
+  },
+  {
+    label: '创作',
+    items: [
+      { to: '/tts', label: '语音合成', icon: AudioLines },
     ],
   },
   {

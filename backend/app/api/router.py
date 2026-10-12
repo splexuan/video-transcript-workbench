@@ -730,7 +730,7 @@ def connectors(session: SessionDep) -> list[dict[str, str]]:
 
 
 @router.get("/settings")
-def get_settings(session: SessionDep) -> dict[str, str | bool]:
+def get_settings(session: SessionDep) -> dict[str, str | bool | int | None]:
     return read_settings(session)
 
 
@@ -738,7 +738,7 @@ def get_settings(session: SessionDep) -> dict[str, str | bool]:
 def patch_settings(
     payload: SettingPatch,
     session: SessionDep,
-) -> dict[str, str | bool]:
+) -> dict[str, str | bool | int | None]:
     return update_settings(session, payload)
 
 

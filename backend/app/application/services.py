@@ -62,6 +62,9 @@ DEFAULT_SETTINGS = {
     "ai_provider": "deepseek",
     "ai_model": "",
     "ai_proxy": "",
+    # 「语音合成」默认使用的模型与音色（Kokoro 说话人 id）；留空表示用引擎的默认值。
+    "tts_model": "",
+    "tts_voice": "",
 }
 
 # AI 驱动的白名单：设置值与数据库里的历史值都要落在这三个里，否则退回 DeepSeek。
@@ -1046,7 +1049,19 @@ def _rebuild_segments(
     return get_document(session, document.id) or document
 
 
-def read_settings(session: Session) -> dict[str, str | bool]:
+def _int_setting(value: object) -> int | None:
+    """设置表里存的是字符串，整数项读出来要转回 int（空串表示「用默认值」）。"""
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def read_settings(session: Session) -> dict[str, str | bool | int | None]:
     stored = {item.key: item.value for item in session.scalars(select(AppSetting))}
     merged = DEFAULT_SETTINGS | stored
     default_model = stored.get("default_model") or LEGACY_MODE_MODELS.get(
@@ -1067,6 +1082,9 @@ def read_settings(session: Session) -> dict[str, str | bool]:
         else DEFAULT_SETTINGS["ai_provider"],
         "ai_model": merged["ai_model"],
         "ai_proxy": merged["ai_proxy"],
+        # 语音合成：模型留空跟随引擎默认；音色存的是字符串，读出来转回整数
+        "tts_model": merged["tts_model"],
+        "tts_voice": _int_setting(merged["tts_voice"]),
     }
 
 
@@ -1099,7 +1117,7 @@ def write_fallback_api_key(session: Session, api_key: str) -> None:
     session.add(AppSetting(key=FALLBACK_API_KEY_SETTING, value=stored))
 
 
-def update_settings(session: Session, patch: SettingPatch) -> dict[str, str | bool]:
+def update_settings(session: Session, patch: SettingPatch) -> dict[str, str | bool | int | None]:
     payload = patch.model_dump(exclude_none=True)
     # Key 要加密保存、且空串代表清除，不能走下面「原样入库」的通用分支
     api_key = payload.pop("fallback_api_key", None)

@@ -9,6 +9,7 @@ import { JobsPage } from './pages/JobsPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { TtsPage } from './pages/TtsPage'
 import { WorkbenchPage } from './pages/WorkbenchPage'
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
               <Route index element={<WorkbenchPage />} />
               <Route path="library" element={<LibraryPage />} />
               <Route path="jobs" element={<JobsPage />} />
+              <Route path="tts" element={<TtsPage />} />
               <Route path="models" element={<ModelsPage />} />
               <Route path="connectors" element={<ConnectorsPage />} />
               <Route path="settings" element={<SettingsPage />} />

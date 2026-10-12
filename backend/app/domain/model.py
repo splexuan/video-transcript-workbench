@@ -5,14 +5,16 @@ from enum import StrEnum
 
 
 class ModelEngine(StrEnum):
-    """识别引擎类型。一个引擎可以对应多个可下载的模型规格。
+    """模型引擎类型。一个引擎可以对应多个可下载的模型规格。
 
-    标点引擎不产出文案，只给「智能分句」把没有标点的字幕整理成带标点的句子。
+    标点引擎不产出文案，只给「智能分句」把没有标点的字幕整理成带标点的句子；
+    语音合成相反——它把文案读成音频，不参与提取。
     """
 
     SENSEVOICE = "sensevoice"
     FASTER_WHISPER = "faster_whisper"
     PUNCTUATION = "punctuation"
+    TTS = "tts"
 
 
 class ModelTier(StrEnum):
@@ -68,6 +70,11 @@ class ModelSpec:
     recommended: bool = False
     note: str | None = None
     requires_package: str | None = None
+    # 归档型模型：files 里放的是官方发布的 tar 包（如 tar.bz2），安装时下载后解压到模型目录。
+    # 这类模型的包里有 espeak-ng-data/ 这样的子目录、几百个文件，逐文件下载既不现实也慢，
+    # 所以「是否就绪」不看 files，只看解压后的 required_paths 是否齐全。
+    archive: bool = False
+    required_paths: tuple[str, ...] = ()
 
     @property
     def approx_bytes(self) -> int:

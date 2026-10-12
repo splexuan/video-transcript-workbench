@@ -11,6 +11,7 @@ import importlib.util
 import json
 import logging
 import shutil
+import tarfile
 import threading
 import time
 from collections.abc import Callable
@@ -97,7 +98,32 @@ def slot_paths(spec: ModelSpec, directory: Path) -> dict[str, Path]:
     return resolved
 
 
+def missing_paths(spec: ModelSpec, directory: Path) -> list[str]:
+    """归档型模型缺哪些必需路径；非归档型返回空列表（由文件槽位判定）。"""
+
+    if not spec.archive:
+        return []
+    return [name for name in spec.required_paths if not (directory / name).exists()]
+
+
+def archive_pending(spec: ModelSpec, directory: Path) -> Path | None:
+    """归档型模型：包还在、但没解压完（下载完就中断了）时返回包路径。
+
+    这样重新点下载时不必再下一遍 147 MB，直接解压即可。
+    """
+
+    if not spec.archive:
+        return None
+    for slot in spec.files:
+        candidate = directory / slot.name
+        if candidate.is_file() and missing_paths(spec, directory):
+            return candidate
+    return None
+
+
 def is_complete(spec: ModelSpec, directory: Path) -> bool:
+    if spec.archive:
+        return all((directory / name).exists() for name in spec.required_paths)
     return all(slot_file(directory, slot) is not None for slot in spec.files)
 
 
@@ -147,12 +173,21 @@ def inspect(spec: ModelSpec) -> ModelStatus:
     directory = spec_dir(spec)
     missing: list[str] = []
     installed_bytes = 0
-    for slot in spec.files:
-        found = slot_file(directory, slot)
-        if found is None:
-            missing.append(slot.name)
-            continue
-        installed_bytes += found.stat().st_size
+    if spec.archive:
+        # 归档型：解压出来是几百个文件，逐个列「缺哪个」没有意义，只看必需路径在不在。
+        # 占用空间按目录实际大小算（解压后比压缩包大，用包大小会显示不准）。
+        missing = missing_paths(spec, directory)
+        if directory.is_dir():
+            installed_bytes = sum(
+                item.stat().st_size for item in directory.rglob("*") if item.is_file()
+            )
+    else:
+        for slot in spec.files:
+            found = slot_file(directory, slot)
+            if found is None:
+                missing.append(slot.name)
+                continue
+            installed_bytes += found.stat().st_size
 
     marker = _read_marker(directory)
     recorded = marker.get("files")
@@ -185,6 +220,8 @@ def inspect(spec: ModelSpec) -> ModelStatus:
         source = None
         if leftover:
             message = "存在未完成的下载，可继续下载"
+        elif archive_pending(spec, directory) is not None:
+            message = "安装包已下载，重新点「下载」即可继续解压"
         else:
             message = f"缺少文件：{', '.join(missing)}"
 
@@ -283,6 +320,48 @@ def remove(spec: ModelSpec) -> bool:
         return False
     shutil.rmtree(directory)
     return True
+
+
+def _is_inside(root: Path, name: str) -> bool:
+    """tar 成员的落点必须落在解压目录内（挡掉用 ../ 写到目录外的包）。"""
+
+    try:
+        candidate = (root / name).resolve()
+    except OSError:
+        return False
+    base = root.resolve()
+    return candidate == base or base in candidate.parents
+
+
+def _extract_archive(archive: Path, directory: Path) -> None:
+    """把官方 tar 包解压到模型目录，并去掉包里多出来的那一层目录。
+
+    包内是 `<包名>/model.int8.onnx` 这种结构，而模型目录需要直接放这些文件，
+    所以先解压到临时目录，再把顶层目录里的内容搬到模型目录，最后清掉临时目录。
+    """
+
+    staging = directory / "_extract"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(archive, "r:*") as handle:
+            members = [item for item in handle.getmembers() if _is_inside(staging, item.name)]
+            try:
+                # Python 3.12+ 默认会做安全过滤，显式写上；3.11 不认这个参数，回退即可。
+                handle.extractall(staging, members=members, filter="data")
+            except TypeError:
+                handle.extractall(staging, members=members)
+        entries = list(staging.iterdir())
+        root = entries[0] if len(entries) == 1 and entries[0].is_dir() else staging
+        for item in list(root.iterdir()):
+            target = directory / item.name
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            elif target.exists():
+                target.unlink(missing_ok=True)
+            shutil.move(str(item), str(target))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 @dataclass
@@ -387,6 +466,10 @@ class ModelInstaller:
         destination = spec_dir(spec)
         destination.mkdir(parents=True, exist_ok=True)
 
+        if spec.archive:
+            self._install_archive(spec, task, destination)
+            return
+
         known_total = sum(slot.size or 0 for slot in spec.files)
         downloaded = 0
         total = known_total
@@ -436,6 +519,59 @@ class ModelInstaller:
             total_bytes=total,
             message="模型下载完成",
         )
+
+    def _install_archive(self, spec: ModelSpec, task: _Task, destination: Path) -> None:
+        """归档型安装：下载官方 tar 包 → 解压到模型目录 → 删掉包。
+
+        下载完但没解压完就断了的话，包还留着，下次点「下载」直接从解压续上。
+        """
+
+        slot = spec.files[0]
+        target = destination / slot.name
+        known_total = slot.size or 0
+
+        if is_complete(spec, destination):
+            task.report(status="completed", percent=100, message="模型已就绪，无需重新下载")
+            return
+
+        if target.is_file() and target.stat().st_size in slot.accepted_sizes:
+            task.report(
+                downloaded_bytes=target.stat().st_size,
+                total_bytes=known_total or target.stat().st_size,
+                file_name=slot.name,
+                completed_files=1,
+                percent=95,
+                message="安装包已存在，直接解压",
+            )
+        else:
+            task.report(file_name=slot.name, message=f"正在下载 {slot.name}")
+            written = self._fetch_with_fallback(spec, task, slot, target)
+            task.report(
+                downloaded_bytes=written,
+                total_bytes=known_total or written,
+                completed_files=1,
+                message="下载完成，正在解压",
+            )
+
+        if task.cancel.is_set():
+            raise _Cancelled("下载已取消")
+
+        # bz2 解压 147 MB 的包要几十秒，进度先顶到 99 并说清楚在做什么，别让界面看着像卡住。
+        task.report(status="running", percent=99, message="正在解压模型，请稍候")
+        _extract_archive(target, destination)
+        target.unlink(missing_ok=True)
+        for leftover in destination.glob(f"{target.name}*{PART_SUFFIX}"):
+            leftover.unlink(missing_ok=True)
+
+        # 标记只记文件：目录（如 espeak-ng-data）的存在性由 required_paths 判定，
+        # 记进去反而会被 inspect 当成「文件不见了」而误报损坏。
+        resolved = {
+            name: destination / name
+            for name in spec.required_paths
+            if (destination / name).is_file()
+        }
+        _write_marker(spec, destination, "download", resolved)
+        task.report(status="completed", percent=100, message="模型安装完成")
 
     def _fetch_with_fallback(self, spec: ModelSpec, task: _Task, slot: ModelFile, target: Path) -> int:
         errors: list[str] = []

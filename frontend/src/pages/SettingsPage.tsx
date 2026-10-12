@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Bot,
   Check,
   CloudDownload,
@@ -10,13 +11,14 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { api } from '../lib/api'
 import { invalidateAiProviders } from '../lib/ai'
 import { shortModelName } from '../lib/labels'
-import type { AiProviderCatalog, AiProviderType, AppSettings, RecognitionModel } from '../types'
+import type { AiProviderCatalog, AiProviderType, AppSettings, RecognitionModel, TtsConfig } from '../types'
 
-const defaults: AppSettings = { theme: 'system', default_model: '', prefer_subtitle: false, keep_media: false, storage_path: '', fallback_api_key_set: false, ai_provider: 'deepseek', ai_model: '', ai_proxy: '' }
+const defaults: AppSettings = { theme: 'system', default_model: '', prefer_subtitle: false, keep_media: false, storage_path: '', fallback_api_key_set: false, ai_provider: 'deepseek', ai_model: '', ai_proxy: '', tts_model: '', tts_voice: null }
 
 export function SettingsPage() {
   const [settings, setSettings] = useState(defaults)
@@ -42,6 +44,8 @@ export function SettingsPage() {
   const [aiCatalog, setAiCatalog] = useState<AiProviderCatalog | null>(null)
   const [aiError, setAiError] = useState('')
   const [aiReloadKey, setAiReloadKey] = useState(0)
+  // 语音合成：模型与音色清单（音色来自 Kokoro 的说话人表）
+  const [ttsConfig, setTtsConfig] = useState<TtsConfig | null>(null)
 
   /** 本地与同步副本一起写，避免两处口径不一致。 */
   function applySettings(next: AppSettings) {
@@ -137,6 +141,21 @@ export function SettingsPage() {
     }
   }, [aiReloadKey])
 
+  // 语音合成的可选模型与音色：模型没装时下拉里仍列出来（标「未安装」），
+  // 音色表则完全来自模型规格，这里只读不改
+  useEffect(() => {
+    let active = true
+    api
+      .ttsConfig()
+      .then((next) => {
+        if (active) setTtsConfig(next)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
   useEffect(() => {
     let active = true
     api.models()
@@ -164,6 +183,8 @@ export function SettingsPage() {
   const aiProvider = savedAiProvider?.available
     ? savedAiProvider
     : aiCatalog?.providers.find((provider) => provider.type === aiCatalog.preference.provider) ?? null
+  /** 设置里选中的语音模型（空串表示「自动」）；用来提示「未安装」。 */
+  const ttsSelected = ttsConfig?.models.find((model) => model.id === settings.tts_model) ?? null
   // 保存的模型可能已下架：列表里没有就回到该驱动的默认模型，避免下拉显示空白
   const aiModelValue =
     aiProvider && aiProvider.models.some((model) => model.id === settings.ai_model)
@@ -287,6 +308,50 @@ export function SettingsPage() {
                 onBlur={commitProxy}
                 onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
               />
+            </label>
+          )}
+        </section>
+        <section className="settings-section panel">
+          <div className="settings-heading"><span><AudioLines size={19} /></span><div><h2>语音合成</h2><p>「语音合成」页默认用哪个模型和音色。</p></div></div>
+          <div className="setting-row">
+            <span>
+              <label htmlFor="tts-model"><strong>默认语音模型</strong></label>
+              <small>把文案读成音频的本地模型（Kokoro，CPU 推理）。没装的话到「语音合成」页或「模型管理」下载，约 140 MB。</small>
+            </span>
+            <div className="setting-control">
+              <select id="tts-model" value={settings.tts_model} onChange={(event) => save({ tts_model: event.target.value })}>
+                <option value="">自动（用已安装的那个）</option>
+                {(ttsConfig?.models ?? []).map((model) => (
+                  <option key={model.id} value={model.id} disabled={!model.ready}>
+                    {model.name}{model.ready ? '' : '（未安装）'}
+                  </option>
+                ))}
+              </select>
+              {ttsConfig?.models.length === 0 && <small className="field-hint">暂时读不到语音模型清单</small>}
+              {ttsSelected && !ttsSelected.ready && (
+                <small className="field-hint">未安装：<Link to="/tts">去「语音合成」页下载</Link></small>
+              )}
+            </div>
+          </div>
+          {ttsConfig && ttsConfig.voice_groups.length > 0 && (
+            <label className="setting-row" htmlFor="tts-voice">
+              <span>
+                <strong>默认音色</strong>
+                <small>Kokoro 的中文音色共 100 个（女声 55 / 男声 45）；先合成一段试听再挑更稳。语速在「语音合成」页里调。</small>
+              </span>
+              <select
+                id="tts-voice"
+                value={settings.tts_voice ?? ttsConfig.voice}
+                onChange={(event) => save({ tts_voice: Number(event.target.value) })}
+              >
+                {ttsConfig.voice_groups.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.voices.map((item) => (
+                      <option key={item.sid} value={item.sid}>{item.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
             </label>
           )}
         </section>

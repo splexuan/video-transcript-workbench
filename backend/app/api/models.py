@@ -14,7 +14,7 @@ from app.domain import (
     ModelState,
     ModelStatus,
 )
-from app.infrastructure import punctuation, transcriber, whisper_engine
+from app.infrastructure import punctuation, transcriber, tts_engine, whisper_engine
 from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.model_store import (
     engine_status,
@@ -102,6 +102,7 @@ def verify_model(model_id: str) -> ModelStatus:
         transcriber.reset_cache()
         whisper_engine.reset_cache()
         punctuation.reset_cache()
+        tts_engine.reset_cache()
     return status
 
 
@@ -137,4 +138,5 @@ def delete_model(model_id: str) -> dict[str, bool | str]:
     transcriber.reset_cache()
     whisper_engine.reset_cache()
     punctuation.reset_cache()
+    tts_engine.reset_cache()
     return {"removed": removed, "model_id": model_id}

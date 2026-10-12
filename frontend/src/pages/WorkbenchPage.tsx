@@ -29,6 +29,26 @@ function batchLines(value: string) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 }
 
+/**
+ * 可以导入的本地音视频后缀，与后端 /api/jobs/upload 的白名单保持一致。
+ *
+ * 后端才是权威（它会按扩展名拒掉不支持的格式），这里提前一份是为了：拖进来时立刻
+ * 能提示「不支持这个格式」，不必先上传一大段再被退回；文件选择框的 accept 也用它。
+ */
+const MEDIA_SUFFIXES = [
+  'mp4', 'mov', 'mkv', 'webm', 'avi',
+  'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus',
+]
+const MEDIA_ACCEPT = [...MEDIA_SUFFIXES.map((suffix) => `.${suffix}`), 'audio/*', 'video/*'].join(',')
+const MEDIA_HINT = 'mp4 / mov / mkv / webm / avi / mp3 / m4a / wav / flac / ogg / opus / aac'
+
+/** 拖进来的目录（没有后缀）与其它非媒体文件都会被这一步挡掉。 */
+function isSupportedMedia(file: File) {
+  const index = file.name.lastIndexOf('.')
+  const suffix = index < 0 ? '' : file.name.slice(index + 1).toLowerCase()
+  return MEDIA_SUFFIXES.includes(suffix)
+}
+
 /** 卡片副标题：这个模型是什么模式、时间轴多细、多大。 */
 function modelSubtitle(model: RecognitionModel) {
   const kind = model.tier === 'fast' ? '极速文本' : '精准时间轴'
@@ -60,6 +80,10 @@ export function WorkbenchPage() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [uploading, setUploading] = useState(false)
+  // 多文件串行提交时的进度文案（「正在导入 2/3」）
+  const [uploadLabel, setUploadLabel] = useState('')
+  // 拖入本地文件时的全屏提示：dragover 期间持续为 true
+  const [dragging, setDragging] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [createdBatchId, setCreatedBatchId] = useState('')
@@ -70,6 +94,9 @@ export function WorkbenchPage() {
   const fileInput = useRef<HTMLInputElement>(null)
   const sourceInput = useRef<HTMLInputElement>(null)
   const batchInput = useRef<HTMLTextAreaElement>(null)
+  // 拖放监听只绑一次（绑在 window 上），用 ref 取到最新的导入函数，
+  // 否则闭包里会一直拿到首次渲染时的模式与模型选择。
+  const importFilesRef = useRef<(files: File[]) => Promise<void>>(async () => undefined)
 
   // 侧栏「新建提取」的落点：已经在工作台时不再是一次「回到当前页」的空导航，
   // 而是把表单复位到可以直接输入的状态。
@@ -87,6 +114,44 @@ export function WorkbenchPage() {
     }
     window.addEventListener('vtw:new-task', reset)
     return () => window.removeEventListener('vtw:new-task', reset)
+  }, [])
+
+  /**
+   * 拖入本地音视频即可导入，与「导入本地文件」按钮共用 importFiles。
+   *
+   * 监听绑在 window 上而不是某个容器：拖到页面任意位置（包括侧栏）松手都能导入，
+   * 不用先把文件瞄到那个按钮上。遮罩用 `pointer-events: none`，事件照旧落在这里。
+   */
+  useEffect(() => {
+    let hideTimer = 0
+    // 拖选中的文字也会触发 drag 事件，只有带 Files 的才接管
+    function hasFiles(event: DragEvent) {
+      return Array.from(event.dataTransfer?.types ?? []).includes('Files')
+    }
+    function onDragOver(event: DragEvent) {
+      if (!hasFiles(event)) return
+      // 必须阻止默认行为，否则浏览器会直接打开拖进来的文件
+      event.preventDefault()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+      setDragging(true)
+      // 拖动期间 dragover 会持续触发；停 200ms 说明已经离开或取消了这次拖拽
+      window.clearTimeout(hideTimer)
+      hideTimer = window.setTimeout(() => setDragging(false), 200)
+    }
+    function onDrop(event: DragEvent) {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      window.clearTimeout(hideTimer)
+      setDragging(false)
+      void importFilesRef.current(Array.from(event.dataTransfer?.files ?? []))
+    }
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.clearTimeout(hideTimer)
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+    }
   }, [])
 
   useEffect(() => {
@@ -280,24 +345,72 @@ export function WorkbenchPage() {
     }
   }
 
-  async function upload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
+  function upload(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? [])
     event.target.value = ''
-    if (!file) return
+    void importFiles(files)
+  }
+
+  /**
+   * 导入本地文件：按钮选文件与拖进来走的是同一条路径。
+   *
+   * 一次拖多个文件时串行提交（后端一次只收一个文件），某个失败不影响其余几个；
+   * 结果显示成一句汇总，而不是让最后一个文件的状态盖掉前面所有结果。
+   */
+  async function importFiles(files: File[]) {
+    if (!files.length) return
+    if (captureMode !== 'single') {
+      setNotice('')
+      setError('批量模式只支持链接：想导入本地文件，请先切到「单条」。')
+      return
+    }
+    const accepted = files.filter(isSupportedMedia)
+    const skipped = files.length - accepted.length
+    if (!accepted.length) {
+      setNotice('')
+      setError(`不支持这些文件的格式（支持 ${MEDIA_HINT}）`)
+      return
+    }
+
     setUploading(true)
     setError('')
     setNotice('')
+    const created: Job[] = []
+    let failed = 0
     try {
-      const created = await api.uploadJob(file, submitMode(), modelId || null, preferSubtitle)
-      setJobs((current) => [created, ...current].slice(0, 4))
-      setFocusedJobId(created.id)
-      setNotice(`“${file.name}”已加入队列。`)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '导入失败，请确认文件可用')
+      for (const [index, file] of accepted.entries()) {
+        setUploadLabel(accepted.length > 1 ? `正在导入 ${index + 1}/${accepted.length}` : '正在导入')
+        try {
+          created.push(await api.uploadJob(file, submitMode(), modelId || null, preferSubtitle))
+        } catch {
+          failed += 1
+        }
+      }
+      if (created.length) {
+        setJobs((current) => [...created, ...current].slice(0, 4))
+        setFocusedJobId(created[0].id)
+      }
+      if (created.length === 1 && !skipped && !failed) {
+        setNotice(`“${accepted[0].name}”已加入队列。`)
+        return
+      }
+      const parts: string[] = []
+      if (created.length) parts.push(`已导入 ${created.length} 个文件`)
+      if (skipped) parts.push(`跳过 ${skipped} 个不支持的格式`)
+      if (failed) parts.push(`${failed} 个导入失败`)
+      if (created.length) setNotice(`${parts.join('，')}。`)
+      else setError(`${parts.join('，') || '导入失败'}，请确认文件可用`)
     } finally {
       setUploading(false)
+      setUploadLabel('')
     }
   }
+
+  // 每渲染一次就把最新的导入函数挂到 ref 上：上面的拖放监听只绑一次，
+  // 不能让它闭包捕获某个渲染的 importFiles（否则永远用首次渲染的模式与模型）。
+  useEffect(() => {
+    importFilesRef.current = importFiles
+  })
 
   // 任务执行优先显示正在跑的任务；其次是本次会话刚提交的那条（含完成/失败结果）。
   // 刷新页面后两个来源都为空，面板回到空态，不会回显上次的任务。
@@ -473,13 +586,20 @@ export function WorkbenchPage() {
                 ref={fileInput}
                 hidden
                 type="file"
-                accept="audio/*,video/*,.mkv,.flac,.opus"
+                accept={MEDIA_ACCEPT}
+                multiple
                 onChange={upload}
               />
               {captureMode === 'single' ? (
-                <button className="file-button" type="button" onClick={() => fileInput.current?.click()} disabled={uploading}>
+                <button
+                  className="file-button"
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={uploading}
+                  title="选文件，或把音视频文件直接拖进这一页"
+                >
                   {uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />}
-                  {uploading ? '正在导入' : '导入本地文件'}
+                  {uploading ? (uploadLabel || '正在导入') : '导入本地文件'}
                 </button>
               ) : <span className="batch-file-note">首版批量模式仅支持链接</span>}
             </div>
@@ -602,6 +722,19 @@ export function WorkbenchPage() {
           </section>
         </div>
       </div>
+      {/* 拖入提示：整窗盖一层，松开即导入；样式里 pointer-events: none，不抢 drop 事件 */}
+      {dragging && (
+        <div className="dropzone-overlay" aria-hidden="true">
+          <div className="dropzone-card">
+            <FileUp size={26} />
+            <strong>松开即可导入本地音视频</strong>
+            <small>支持 {MEDIA_HINT}</small>
+            {captureMode !== 'single' && (
+              <small className="dropzone-warn">当前是批量模式，本地文件只能在「单条」模式下导入</small>
+            )}
+          </div>
+        </div>
+      )}
       {docPreviewId && (
         <DocumentPreviewModal key={docPreviewId} documentId={docPreviewId} backTo="/" backLabel="工作台" onClose={() => setDocPreviewId('')} />
       )}

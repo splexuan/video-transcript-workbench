@@ -233,6 +233,76 @@ class SettingPatch(BaseModel):
     ai_model: str | None = Field(default=None, max_length=128)
     # Codex 出网用的代理（本机可在「设置 - AI 驱动」里填）；留空走系统默认
     ai_proxy: str | None = Field(default=None, max_length=500)
+    # 「语音合成」默认用的模型与音色（音色是 Kokoro 的说话人 id）；留空用引擎默认
+    tts_model: str | None = Field(default=None, max_length=64)
+    tts_voice: int | None = Field(default=None, ge=0, le=200)
+
+
+class TtsVoiceItem(BaseModel):
+    """一个音色：sid 是 Kokoro 的说话人编号，name 是官方音色名。"""
+
+    sid: int
+    name: str
+
+
+class TtsVoiceGroup(BaseModel):
+    label: str
+    voices: list[TtsVoiceItem]
+
+
+class TtsModelOption(BaseModel):
+    id: str
+    name: str
+    state: str
+    ready: bool
+    approx_bytes: int
+
+
+class TtsConfigRead(BaseModel):
+    """语音合成页的配置：能选什么模型/音色、当前选择、以及估算依据。"""
+
+    ready: bool
+    message: str
+    model: TtsModelOption | None
+    models: list[TtsModelOption]
+    voice_groups: list[TtsVoiceGroup]
+    voice: int
+    speed: float
+    max_chars: int
+    # 前端据此估算等待时间：每秒音频约几个字（实测中文）、合成耗时与音频时长之比，
+    # 以及这台机器会把句子摊到几个实例上并行合成（核数少时为 1，即原来的串行）
+    chars_per_second: float
+    realtime_factor: float
+    parallel_lanes: int
+
+
+class TtsSynthesizeRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+    # 留空用设置里的默认模型/音色
+    model_id: str | None = Field(default=None, max_length=64)
+    voice: int | None = Field(default=None, ge=0, le=200)
+    speed: float | None = Field(default=None, ge=0.5, le=2.0)
+
+
+class TtsJobRead(BaseModel):
+    """合成任务的状态快照；audio_url 在完成后才给出。"""
+
+    id: str
+    status: str
+    message: str
+    percent: int
+    model_id: str
+    voice: int
+    speed: float
+    chars: int
+    sentences_done: int
+    sentences_total: int
+    duration: float
+    elapsed: float
+    error: str | None
+    audio_url: str | None
+    created_at: float
+    updated_at: float
 
 
 class AiSummarizeRequest(BaseModel):

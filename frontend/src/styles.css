@@ -667,6 +667,195 @@ button:disabled {
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
 }
+
+/* ---------- 语音合成 ---------- */
+/* 卡片内边距：`.panel` 基础样式只有边框、圆角与阴影，padding 是给 workbench-grid /
+   content-grid 里的卡片单独加的；这一页用的是裸 .panel，不补上就会让标题、正文框和
+   按钮全部贴着边框（左右只差那 1px 边框）。 */
+.tts-page .panel {
+  padding: 24px;
+}
+/* 左栏写文案、右栏看结果与历史；窄屏落成单栏（与工作台同一思路） */
+.tts-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: var(--space-xl);
+  align-items: start;
+}
+.tts-aside {
+  display: grid;
+  gap: var(--space-xl);
+}
+.tts-textarea {
+  width: 100%;
+  min-height: 260px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  resize: vertical;
+}
+.tts-textarea:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.tts-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.tts-warn {
+  color: var(--danger);
+}
+.tts-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xl);
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+.tts-control {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.tts-control strong {
+  color: var(--text);
+}
+/* 语速那组吃掉剩余宽度：滑块拉满，宽栏里右边就不会空着一大块；
+   行程够长（0.6~1.6 每档约 0.05）也更好拖 */
+.tts-control:last-child {
+  flex: 1;
+  min-width: 220px;
+}
+.tts-control input[type='range'] {
+  width: 100%;
+}
+.tts-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: var(--space-lg);
+}
+.tts-hint {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+/* 模型没装时的下载卡 */
+.tts-setup {
+  margin-bottom: var(--space-xl);
+}
+.tts-setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tts-setup-actions small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.tts-progress {
+  display: grid;
+  gap: 6px;
+}
+.tts-progress-bar {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  overflow: hidden;
+}
+.tts-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+}
+.tts-progress-text {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.tts-result {
+  display: grid;
+  gap: 12px;
+}
+.tts-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tts-result-head small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.tts-player {
+  width: 100%;
+}
+.tts-result-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.tts-result-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tts-history {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tts-history li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+.tts-history li.active {
+  border-color: var(--border-strong);
+  background: var(--surface-subtle);
+}
+.tts-history-main {
+  flex: 1;
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tts-history-title {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.tts-history-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
 @keyframes modal-fade {
   from {
     opacity: 0;
@@ -4067,6 +4256,49 @@ button.timecode:hover:not(:disabled) {
 /* 工作台表单里的「识别设置」分组：把模型、导入、平台字幕收进同一块，
    并用一句话说明当前实际会怎么跑。
    去掉描边：它自己已经有浅色底，再描一圈就和卡片边框叠成双层轮廓 */
+/* ---------- 导入本地文件：拖入提示 ---------- */
+/* 整窗盖一层：拖到页面任何位置（含侧栏）松手都能导入。
+   pointer-events: none 是必须的——遮罩若接收事件，dragover 会从窗口转到遮罩上，
+   拖入状态在鼠标经过遮罩的那一刻就断了。 */
+.dropzone-overlay {
+  position: fixed;
+  inset: 0;
+  /* 低于弹窗（50）：预览弹窗开着时拖入文件，提示层不压在弹窗上面 */
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 2px dashed var(--primary);
+  animation: modal-fade var(--ease);
+}
+.dropzone-card {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 26px 34px;
+  border-radius: var(--radius-lg);
+  color: var(--primary);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+.dropzone-card strong {
+  color: var(--text);
+  font-size: var(--text-lg);
+}
+.dropzone-card small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+/* 批量模式下拖入会被拒：提示里先说明，别等松手才报错 */
+.dropzone-warn {
+  color: var(--warning);
+}
+
 .capture-settings {
   display: grid;
   gap: var(--space-md);
@@ -4210,9 +4442,9 @@ button.timecode:hover:not(:disabled) {
   .settings-layout .field-error {
     max-width: 240px;
   }
-  /* 卡片是奇数张（任务偏好 / AI 驱动 / 兜底解析 / 本地存储 / 关于），
-     最后一行的「关于」跨两列收尾——否则它左边一张、右边的空位会显得缺了一块 */
-  .settings-layout > .settings-section:last-child {
+  /* 卡片是奇数张时（如 5 张），最后一行的「关于」跨两列收尾——否则右边空一块；
+     偶数张时本来就两两成行，不跨。用 nth-child(odd) 判「落单」的那张。 */
+  .settings-layout > .settings-section:last-child:nth-child(odd) {
     grid-column: 1 / -1;
   }
 }
@@ -4285,6 +4517,9 @@ button.timecode:hover:not(:disabled) {
 }
 
 @media (max-width: 980px) {
+  .tts-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .workbench-grid {
     grid-template-columns: minmax(0, 1fr);
   }

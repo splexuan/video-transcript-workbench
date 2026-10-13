@@ -10,6 +10,7 @@ import { Thumb } from '../components/Thumb'
 import { api } from '../lib/api'
 import { jobDisplayTitle } from '../lib/jobDisplay'
 import { isRunningBatch } from '../lib/jobBatch'
+import { recognitionModels } from '../lib/models'
 import { shortModelName } from '../lib/labels'
 import type { DocumentSummary, DocumentTitle, Job, JobBatch, JobBatchDetail, JobBatchPreflight, ModelCatalog, RecognitionModel } from '../types'
 
@@ -266,7 +267,7 @@ export function WorkbenchPage() {
         setPreferSubtitle(settingsResult.value.prefer_subtitle)
         // 默认选中设置里的模型；它没装就退到推荐模型，再退到任意已装模型
         const preferred = settingsResult.value.default_model
-        const installed = (nextCatalog?.models ?? []).filter((item) => item.state === 'ready')
+        const installed = recognitionModels(nextCatalog?.models).filter((item) => item.state === 'ready')
         const pick = installed.find((item) => item.id === preferred)
           ?? installed.find((item) => item.recommended)
           ?? installed[0]
@@ -275,7 +276,8 @@ export function WorkbenchPage() {
     return () => { active = false }
   }, [])
 
-  const models = catalog?.models ?? []
+  // 只列识别模型：标点恢复与语音合成也在这个目录里，但它们不能用来转写
+  const models = recognitionModels(catalog?.models)
   const missingModels = models.filter((item) => item.state !== 'ready')
   const readyModels = models.filter((item) => item.state === 'ready')
   const selectedModel = models.find((item) => item.id === modelId)

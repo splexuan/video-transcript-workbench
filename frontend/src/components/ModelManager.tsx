@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 
 import { api } from '../lib/api'
+import { RECOGNITION_ENGINES } from '../lib/models'
 import { useConfirm } from '../lib/useConfirm'
 import { formatBytes } from '../lib/format'
 import { LoadingState } from './LoadingState'
@@ -77,7 +78,7 @@ const GROUPS = [
     key: 'recognition',
     label: '识别与转写',
     hint: '把视频里的语音转成文字',
-    engines: ['sensevoice', 'faster_whisper'],
+    engines: RECOGNITION_ENGINES,
   },
   {
     key: 'utility',

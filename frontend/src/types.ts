@@ -275,6 +275,8 @@ export interface TtsJob {
   model_id: string
   voice: string
   speed: number
+  /** 提交时的原文：点记录能填回输入框。早期记录没存，是空串。 */
+  text: string
   chars: number
   sentences_done: number
   sentences_total: number

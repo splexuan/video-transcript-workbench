@@ -58,6 +58,21 @@ def test_job_rejects_unknown_model() -> None:
     assert response.status_code == 400
 
 
+def test_job_rejects_a_model_that_cannot_transcribe() -> None:
+    """标点恢复与语音合成也在同一个模型目录里：它们存在、能通过存在性检查，但不能转写。"""
+
+    from app.infrastructure import tts_engine
+
+    payload = {"source_type": "url", "source": "https://b23.tv/example"}
+    with TestClient(app) as client:
+        punctuation = client.post("/api/jobs", json={**payload, "model_id": "punct-ct-transformer-zh-en"})
+        tts = client.post("/api/jobs", json={**payload, "model_id": tts_engine.DEFAULT_MODEL_ID})
+    assert punctuation.status_code == 400
+    assert "不能用于识别" in punctuation.json()["detail"]
+    assert tts.status_code == 400
+    assert "不能用于识别" in tts.json()["detail"]
+
+
 def test_job_payload_includes_recognition_model_fields() -> None:
     """任务记录要带上实际用到的识别模型；还没开始识别时为空。"""
 

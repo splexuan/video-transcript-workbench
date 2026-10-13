@@ -85,6 +85,35 @@ ZIPVOICE_RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-
 # 跟着模型一起装到同一个目录，由 model_store 在解压后单独下载（files 的第二项起）。
 ZIPVOICE_VOCODER_RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models"
 
+# ZipVoice 官方只有 GitHub Releases 这一个渠道：Hugging Face 与 ModelScope 上都没有它的
+# ONNX 整包（HF 上只有 k2-fsa/ZipVoice 的 PyTorch 权重，不是 sherpa-onnx 要的东西）。
+# 而官方直连实测只有 47 KB/s——104 MB 的包要等近 40 分钟，比其他走 ModelScope 的模型
+# （10 MB/s 量级）慢两个数量级。所以下载源排成四级：
+#   1. 社区维护的 ModelScope 国内镜像（原样镜像官方文件，字节一致，实测 10 MB/s）
+#   2~3. GitHub 加速代理（镜像失效时的等价替代）
+#   4. 官方源兜底（代理挂了还能有个能用的，只是慢）
+# 另有「慢到不像话就换源」的机制兜底（见 model_store 的 SLOW_BYTES_PER_SEC）。
+GH_PROXY = "https://gh-proxy.com/"
+GH_FAST = "https://ghfast.top/"
+# 国内镜像仓库：lexuan/sherpa-onnx-tts-models，只放 ZipVoice 的官方文件（原样上传，字节与官方一致）
+TTS_MIRROR_REPO = "lexuan/sherpa-onnx-tts-models"
+
+
+def _zipvoice_sources(github_url: str) -> tuple[str, ...]:
+    """ZipVoice 文件的下载源，优先级：国内镜像 → GitHub 加速 → 官方。
+
+    文件名从 GitHub 地址里取：两个 release（tts-models 与 vocoder-models）里的文件名与
+    国内镜像仓库里的完全一致，所以两个文件能共用这一个函数。
+    """
+    name = github_url.rsplit("/", 1)[-1]
+    return (
+        f"{MODEL_SCOPE}/{TTS_MIRROR_REPO}/resolve/master/{name}",
+        f"{GH_PROXY}{github_url}",
+        f"{GH_FAST}{github_url}",
+        github_url,
+    )
+
+
 ZIPVOICE_INT8_PACKAGE = "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"
 ZIPVOICE_INT8_BYTES = 109_162_785
 ZIPVOICE_FP32_PACKAGE = "sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia.tar.bz2"
@@ -106,6 +135,11 @@ ZIPVOICE_REQUIRED_ANY = (
     ("encoder.int8.onnx", "encoder.onnx"),
     ("decoder.int8.onnx", "decoder.onnx"),
 )
+
+# 上游还有非蒸馏的完整版（sherpa-onnx-zipvoice-zh-en-emilia，约 605 MB），这里**故意不提供**：
+# 实测它在这个 sherpa-onnx 实现下音质不如蒸馏版（同样的参考音频与文本，响度低约 4 dB、
+# 听感更差），而且它不自带拼音词典、也没有内置音色需要的参考音频、模型文件名与蒸馏版
+# 完全不同。官方文档里同样只有蒸馏版的示例，看起来完整版没被充分验证过。
 
 WHISPER_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
 
@@ -199,12 +233,12 @@ def _build_catalog() -> dict[str, ModelSpec]:
             files=(
                 ModelFile(
                     name=package,
-                    urls=(f"{ZIPVOICE_RELEASE}/{package}",),
+                    urls=_zipvoice_sources(f"{ZIPVOICE_RELEASE}/{package}"),
                     size=package_bytes,
                 ),
                 ModelFile(
                     name=ZIPVOICE_VOCODER_FILE,
-                    urls=(f"{ZIPVOICE_VOCODER_RELEASE}/{ZIPVOICE_VOCODER_FILE}",),
+                    urls=_zipvoice_sources(f"{ZIPVOICE_VOCODER_RELEASE}/{ZIPVOICE_VOCODER_FILE}"),
                     size=ZIPVOICE_VOCODER_BYTES,
                 ),
             ),
@@ -216,6 +250,7 @@ def _build_catalog() -> dict[str, ModelSpec]:
             required_paths=ZIPVOICE_REQUIRED_PATHS,
             required_any=ZIPVOICE_REQUIRED_ANY,
         )
+
     return catalog
 
 
@@ -235,6 +270,11 @@ ENGINE_PACKAGES: dict[str, str] = {
     ModelEngine.PUNCTUATION.value: "sherpa_onnx",
     ModelEngine.TTS.value: "sherpa_onnx",
 }
+
+# 真正参与语音识别的引擎。模型目录是全类型的：标点恢复只服务「智能分句」、
+# 语音合成把文案读成音频，两者都不能用来转写——首页的识别模型选择、设置页的
+# 默认识别模型、以及提交任务时的模型校验都按这个集合筛。
+RECOGNITION_ENGINES = (ModelEngine.SENSEVOICE, ModelEngine.FASTER_WHISPER)
 
 # 面向用户的依赖名称，用在错误提示里。
 ENGINE_PACKAGE_LABELS: dict[str, str] = {

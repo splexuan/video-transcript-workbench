@@ -143,3 +143,31 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
+
+
+class TtsJobRecord(Base):
+    """一次语音合成的留痕。
+
+    合成本身是后台线程在跑（见 application/tts_jobs）：运行时的进度、取消信号留在内存
+    （threading.Event 没法入库），跑完之后结果落到这张表——重启后历史还在，能回听、能删。
+    """
+
+    __tablename__ = "tts_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    message: Mapped[str] = mapped_column(String(200), default="")
+    model_id: Mapped[str] = mapped_column(String(120), default="")
+    # 音色 id（ZipVoice 是零样本克隆，指向一段参考音频而不是编号）
+    voice: Mapped[str] = mapped_column(String(120), default="")
+    speed: Mapped[float] = mapped_column(Float, default=1.0)
+    # 提交时的原文：点历史记录能把它填回输入框，接着改两个字再合成一遍
+    text: Mapped[str] = mapped_column(Text, default="")
+    chars: Mapped[int] = mapped_column(Integer, default=0)
+    duration: Mapped[float] = mapped_column(Float, default=0.0)
+    elapsed: Mapped[float] = mapped_column(Float, default=0.0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 只记文件名：数据目录被整体搬走后，存绝对路径就失效了
+    audio_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)

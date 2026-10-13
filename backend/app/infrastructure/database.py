@@ -76,6 +76,11 @@ _LATER_COLUMNS: dict[str, dict[str, str]] = {
         # 老库里的文案保持原有的逐行展示，所以默认 0。
         "paragraph_body": "BOOLEAN DEFAULT 0",
     },
+    # 合成记录原本只存了字数；补上原文，好让历史记录能回填输入框。
+    # 老库那几行填成空串（它们确实没有原文可回填），前端按「空则不动输入框」处理。
+    "tts_jobs": {
+        "text": "TEXT DEFAULT ''",
+    },
 }
 
 _LATER_INDEXES = (
@@ -91,6 +96,11 @@ def _add_missing_columns() -> None:
                 row[1]
                 for row in connection.exec_driver_sql(f"PRAGMA table_info({table})")
             }
+            # 列查不到 = 表还不存在。正常启动时 create_all 已经把它建好，但更早版本的
+            # 库里可能压根没有这张表（比如 TTS 记录表是后加的），这时跳过——否则
+            # ALTER 会撞上 "no such table"，把整个启动流程带崩。
+            if not existing:
+                continue
             for name, ddl in columns.items():
                 if name not in existing:
                     connection.exec_driver_sql(

@@ -307,6 +307,9 @@ class TtsJobRead(BaseModel):
     model_id: str
     voice: str
     speed: float
+    # 提交时的原文：点历史记录能填回输入框继续改。
+    # 早期记录没有存原文，这时是空串，前端据此不覆盖输入框里已有的内容。
+    text: str = ""
     chars: int
     sentences_done: int
     sentences_total: int

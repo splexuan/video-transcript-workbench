@@ -16,6 +16,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { invalidateAiProviders } from '../lib/ai'
 import { shortModelName } from '../lib/labels'
+import { recognitionModels } from '../lib/models'
 import type { AiProviderCatalog, AiProviderType, AppSettings, RecognitionModel, TtsConfig } from '../types'
 
 const defaults: AppSettings = { theme: 'system', default_model: '', prefer_subtitle: false, keep_media: false, storage_path: '', fallback_api_key_set: false, ai_provider: 'deepseek', ai_model: '', ai_proxy: '', tts_model: '', tts_voice: null }
@@ -160,7 +161,8 @@ export function SettingsPage() {
     let active = true
     api.models()
       .then((catalog) => {
-        if (active) setModels(catalog.models)
+        // 只列识别模型：标点恢复与语音合成也在同一个目录里，选它们没法转写
+        if (active) setModels(recognitionModels(catalog.models))
       })
       .catch(() => {
         if (active) setModelsError('模型列表读取失败，请检查本地服务后重试。')

@@ -19,8 +19,9 @@ from app.infrastructure.database import init_database
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_database()
-    # 合成记录只存在内存里，音频却落盘；启动时清掉上次会话的遗留，
-    # 否则每次重启都会留下一批再也引用不到的文件。
+    # 合成记录落在数据库里：先把上次进程退出时还在跑的任务标成「已中断」（否则它们
+    # 会永远停在「合成中」，既删不掉也等不到结果），再清掉没有记录引用的音频文件。
+    tts_jobs.manager.mark_interrupted()
     tts_jobs.manager.sweep_orphans()
     if settings.worker_enabled:
         local_worker.start()

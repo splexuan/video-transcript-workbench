@@ -19,7 +19,7 @@ from app.application import tts_jobs
 from app.application.services import read_settings, update_settings
 from app.config import settings
 from app.domain import EngineUnavailableError
-from app.infrastructure import model_store, tts_engine
+from app.infrastructure import database, model_store, tts_engine
 from app.infrastructure.database import SessionLocal, init_database
 from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.text_numbers import normalize_chinese_numbers
@@ -810,6 +810,210 @@ def test_fp32_zipvoice_is_offered_as_an_option() -> None:
     assert spec.recommended is False
     assert [item.name for item in spec.files[1:]] == [VOCODER]
     assert tts_engine.DEFAULT_MODEL_ID == ZIPVOICE
+
+
+def test_zipvoice_model_files_are_picked_in_pairs(tmp_path, monkeypatch) -> None:
+    """编码器与解码器必须成对挑：不能 int8 配 fp32，也不能只有一半就凑。"""
+
+    monkeypatch.setattr(settings, "models_dir", tmp_path / "models")
+    int8_dir = model_store.spec_dir(require_spec("sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"))
+    fp32_dir = model_store.spec_dir(require_spec("sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia"))
+    int8_dir.mkdir(parents=True)
+    fp32_dir.mkdir(parents=True)
+
+    (int8_dir / "encoder.int8.onnx").write_bytes(b"x")
+    (int8_dir / "decoder.int8.onnx").write_bytes(b"x")
+    assert tts_engine._pick_model_pair(int8_dir)[0].name == "encoder.int8.onnx"  # noqa: SLF001
+
+    # 另一代布局的文件名（text_encoder / fm_decoder）同样认
+    (fp32_dir / "text_encoder.onnx").write_bytes(b"x")
+    (fp32_dir / "fm_decoder.onnx").write_bytes(b"x")
+    assert tts_engine._pick_model_pair(fp32_dir)[0].name == "text_encoder.onnx"  # noqa: SLF001
+
+    # 混精度不能凑对：只有 fp32 编码器配 int8 解码器
+    mixed = tmp_path / "mixed"
+    mixed.mkdir()
+    (mixed / "encoder.onnx").write_bytes(b"x")
+    (mixed / "decoder.int8.onnx").write_bytes(b"x")
+    with pytest.raises(EngineUnavailableError):
+        tts_engine._pick_model_pair(mixed)  # noqa: SLF001
+
+
+def _fresh_tts_manager(tmp_path, monkeypatch) -> tts_jobs.TtsJobManager:
+    """干净的库 + 新的 manager。
+
+    记录现在落库、而数据库在同一进程内是共用的（engine 只建一次），所以测试之间
+    必须自己把表清空，否则计数会被上一个测试的残留记录污染。
+    """
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    init_database()
+    with SessionLocal() as session:
+        session.execute(text("DELETE FROM tts_jobs"))
+        session.commit()
+    return tts_jobs.TtsJobManager()
+
+
+def test_tts_records_persist_across_managers(tmp_path, monkeypatch) -> None:
+    """合成记录要落库：换个 manager（等同重启进程）之后仍查得到、能删、删时带走音频。"""
+
+    manager = _fresh_tts_manager(tmp_path, monkeypatch)
+    audio = manager.audio_dir() / "job1.wav"
+    audio.write_bytes(b"RIFF")
+    manager._store(  # noqa: SLF001
+        tts_jobs.TtsJob(
+            id="job1",
+            voice="v",
+            text="要能回填的原文。",
+            chars=10,
+            status="completed",
+            audio_path=str(audio),
+        )
+    )
+
+    fresh = tts_jobs.TtsJobManager()  # 新进程里的 manager
+    loaded = fresh.get("job1")
+    assert loaded is not None
+    assert loaded.status == "completed"
+    assert loaded.audio_path == str(audio)
+    assert loaded.ready is True
+    assert loaded.text == "要能回填的原文。"
+    assert [item.id for item in fresh.recent()] == ["job1"]
+
+    assert fresh.remove("job1") is True
+    assert not audio.exists()
+    assert fresh.get("job1") is None
+
+
+def test_older_tts_jobs_table_gets_the_text_column(tmp_path, monkeypatch) -> None:
+    """老库升级：tts_jobs 原本没有 text 列，启动时要能补上（补不上重启就失败）。
+
+    补出来的列对已有行是空串而不是 NULL——那些记录确实没有原文，前端按「空则不动
+    输入框」处理，不能因此报错。
+    """
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    init_database()
+    try:
+        with SessionLocal() as session:
+            session.execute(text("DROP TABLE tts_jobs"))
+            session.execute(
+                text(
+                    "CREATE TABLE tts_jobs (id VARCHAR(32) PRIMARY KEY, "
+                    "status VARCHAR(16) DEFAULT 'pending', message VARCHAR(200), "
+                    "model_id VARCHAR(120), voice VARCHAR(120), speed FLOAT, "
+                    "chars INTEGER, duration FLOAT, elapsed FLOAT, error TEXT, "
+                    "audio_name VARCHAR(80), created_at DATETIME, updated_at DATETIME)"
+                )
+            )
+            session.execute(text("INSERT INTO tts_jobs (id, status) VALUES ('old', 'completed')"))
+            session.commit()
+
+        database._add_missing_columns()  # noqa: SLF001 - 启动时干的就是这件事
+
+        with SessionLocal() as session:
+            columns = {
+                row[1]
+                for row in session.execute(text("PRAGMA table_info(tts_jobs)"))
+            }
+            value = session.execute(text("SELECT text FROM tts_jobs WHERE id = 'old'")).scalar()
+        assert "text" in columns
+        assert value == ""
+    finally:
+        # 把标准表建回来，免得给后面的用例留下一个缺列的表
+        with SessionLocal() as session:
+            session.execute(text("DROP TABLE tts_jobs"))
+            session.commit()
+        init_database()
+
+
+def test_submitted_text_is_kept_with_the_record(tmp_path, monkeypatch, fake_reference) -> None:
+    """提交时的原文要留在记录里：点历史记录能把它填回输入框继续改。"""
+
+    manager = _fresh_tts_manager(tmp_path, monkeypatch)
+    _install_fake(monkeypatch, [])
+    text = "这段原文要能回填到输入框。"
+    job = manager.submit(text, model_id=ZIPVOICE, voice=tts_engine.DEFAULT_VOICE, speed=1.0)
+
+    # 记录是同步建好的，原文立刻就在
+    assert job.text == text
+
+    # 等后台线程收工，再从库里读一遍：确认原文不只是留在内存对象上
+    for _ in range(200):
+        if not manager.is_busy():
+            break
+        time.sleep(0.05)
+    loaded = manager.get(job.id)
+    assert loaded is not None
+    assert loaded.status == "completed"
+    assert loaded.text == text
+
+
+def test_interrupted_jobs_are_marked_on_startup(tmp_path, monkeypatch) -> None:
+    """上次退出时还在跑的任务要标成中断，否则会永远停在「合成中」。"""
+
+    manager = _fresh_tts_manager(tmp_path, monkeypatch)
+    for index, status in enumerate(("pending", "running", "cancelling", "completed")):
+        manager._store(tts_jobs.TtsJob(id=f"j{index}", status=status))  # noqa: SLF001
+
+    manager.mark_interrupted()
+
+    for index in range(3):
+        job = manager.get(f"j{index}")
+        assert job is not None and job.status == "failed"
+        assert "中断" in job.message
+    done = manager.get("j3")
+    assert done is not None and done.status == "completed"
+
+
+def test_sweep_orphans_keeps_referenced_audio(tmp_path, monkeypatch) -> None:
+    """记录落库之后不能再清空音频目录：只清没有记录引用的孤儿文件。"""
+
+    manager = _fresh_tts_manager(tmp_path, monkeypatch)
+    kept = manager.audio_dir() / "keep.wav"
+    kept.write_bytes(b"RIFF")
+    orphan = manager.audio_dir() / "orphan.wav"
+    orphan.write_bytes(b"RIFF")
+    manager._store(tts_jobs.TtsJob(id="keep", status="completed", audio_path=str(kept)))  # noqa: SLF001
+
+    manager.sweep_orphans()
+
+    assert kept.exists()
+    assert not orphan.exists()
+
+
+def test_clear_finished_keeps_running_job(tmp_path, monkeypatch) -> None:
+    """清空只动已结束的记录，正在跑的那条留着。"""
+
+    manager = _fresh_tts_manager(tmp_path, monkeypatch)
+    done_audio = manager.audio_dir() / "done.wav"
+    done_audio.write_bytes(b"RIFF")
+    manager._store(  # noqa: SLF001
+        tts_jobs.TtsJob(id="done", status="completed", audio_path=str(done_audio))
+    )
+    running = tts_jobs.TtsJob(id="live", status="running")
+    with manager._lock:  # noqa: SLF001 - 模拟「正在跑」的任务
+        manager._active["live"] = running  # noqa: SLF001
+    manager._store(running)  # noqa: SLF001
+
+    removed = manager.clear_finished()
+
+    assert removed == 1
+    assert not done_audio.exists()
+    assert manager.get("done") is None
+    assert manager.get("live") is not None
+
+
+def test_missing_lexicon_is_reported_instead_of_crashing(tmp_path) -> None:
+    """缺 lexicon.txt 要给出可读报错：sherpa-onnx 自己会直接中止进程，连异常都抛不出来。"""
+
+    directory = tmp_path / "model"
+    directory.mkdir()
+    with pytest.raises(EngineUnavailableError, match="lexicon"):
+        tts_engine._require_lexicon(directory)  # noqa: SLF001
+
+    (directory / "lexicon.txt").write_bytes(b"zhong z0 ong1\n")
+    assert tts_engine._require_lexicon(directory).name == "lexicon.txt"  # noqa: SLF001
 
 
 def test_espeak_failure_becomes_an_actionable_message(tmp_path, monkeypatch) -> None:

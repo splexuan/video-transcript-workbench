@@ -113,6 +113,7 @@ def _job_read(job: tts_jobs.TtsJob) -> TtsJobRead:
         model_id=job.model_id,
         voice=job.voice,
         speed=job.speed,
+        text=job.text,
         chars=job.chars,
         sentences_done=job.sentences_done,
         sentences_total=job.sentences_total,
@@ -276,6 +277,13 @@ def create_tts_job(payload: TtsSynthesizeRequest, session: SessionDep) -> TtsJob
 @router.get("/jobs", response_model=list[TtsJobRead])
 def list_tts_jobs() -> list[TtsJobRead]:
     return [_job_read(item) for item in tts_jobs.manager.recent()]
+
+
+@router.delete("/jobs")
+def clear_tts_jobs() -> dict[str, int]:
+    """清空所有已结束的合成记录与音频文件；正在合成的那条不动。"""
+
+    return {"removed": tts_jobs.manager.clear_finished()}
 
 
 @router.get("/jobs/{job_id}", response_model=TtsJobRead)

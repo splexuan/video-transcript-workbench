@@ -49,9 +49,24 @@ PART_SUFFIX = ".part"
 CHUNK_BYTES = 1024 * 1024
 USER_AGENT = f"CreatorStudio/{settings.app_version} (+local)"
 
+# 慢速判定：低于这个均速（字节/秒）就换下一个下载源。
+#
+# 实测同一条网络下，国内镜像（ModelScope）能到 10 MB/s，GitHub 官方直连只有 47 KB/s，
+# 各种加速源在 0.8~1.2 MB/s 量级。官方直连不会报错，只会一直慢慢挪——104 MB 的包
+# 要等近 40 分钟。与其在那儿耗着，不如早点换源。
+SLOW_BYTES_PER_SEC = 96 * 1024
+# 每隔这么久看一眼速度：太短会被「建连接 + 等首包」那几秒拉低均值而误判
+SLOW_CHECK_SECONDS = 4.0
+# 判定前至少要看到这么多字节，否则同样不敢下结论
+SLOW_MIN_BYTES = 512 * 1024
+
 
 class _Cancelled(RuntimeError):
     pass
+
+
+class _TooSlow(RuntimeError):
+    """这个源能连上，但慢到不值得继续等（与 _Cancelled 一样直接换源，不重试）。"""
 
 
 def models_root() -> Path:
@@ -133,7 +148,9 @@ def archive_pending(spec: ModelSpec, directory: Path) -> Path | None:
 
 def is_complete(spec: ModelSpec, directory: Path) -> bool:
     if spec.archive:
-        return all((directory / name).exists() for name in spec.required_paths)
+        # 和 inspect 共用同一套判定：required_paths 之外还要看 required_any，
+        # 缺 encoder/decoder 这类核心文件不能算装好——否则要等真正合成时才报错。
+        return not missing_paths(spec, directory)
     return all(slot_file(directory, slot) is not None for slot in spec.files)
 
 
@@ -183,14 +200,39 @@ def _read_marker(directory: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _marker_key(path: Path, directory: Path) -> str:
+    """标记里的键用**相对目录的路径**。
+
+    归档包里有 test_wavs/leijun-1.wav 这种放在子目录里的文件：只记 path.name 的话，
+    校验阶段会在根目录找它，然后把装好的模型误报成「文件异常」。
+    """
+
+    try:
+        return path.relative_to(directory).as_posix()
+    except ValueError:  # pragma: no cover - 兜住目录之外的绝对路径
+        return path.name
+
+
+def _marker_file(directory: Path, name: str) -> Path | None:
+    """把标记里的一条落到磁盘上的文件上。"""
+
+    direct = directory / name
+    if direct.is_file():
+        return direct
+    # 兼容早期版本的标记：那时只记文件名，子目录里的文件会被判成缺失。
+    # 按文件名在目录里找一次，唯一命中才认（同名多个说明无法确定，宁可报异常）。
+    matches = [item for item in directory.rglob(Path(name).name) if item.is_file()]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _write_marker(spec: ModelSpec, directory: Path, source: str, files: dict[str, Path]) -> None:
     payload = {
         "model_id": spec.id,
         "engine": spec.engine.value,
         "source": source,
         "installed_at": datetime.now(UTC).isoformat(),
-        # 记录磁盘上的真实文件名，兼容文件名（如 model_q8.onnx）也能被正确校验。
-        "files": {path.name: path.stat().st_size for path in files.values()},
+        # 记磁盘上的真实文件（含子目录），兼容文件名（如 model_q8.onnx）也能被正确校验。
+        "files": {_marker_key(path, directory): path.stat().st_size for path in files.values()},
     }
     try:
         (directory / MARKER_FILENAME).write_text(
@@ -226,9 +268,13 @@ def inspect(spec: ModelSpec) -> ModelStatus:
     broken: list[str] = []
     if isinstance(recorded, dict):
         for name, expected in recorded.items():
-            path = directory / str(name)
-            stale = isinstance(expected, int) and path.is_file() and path.stat().st_size != expected
-            if not path.is_file() or stale:
+            path = _marker_file(directory, str(name))
+            stale = (
+                isinstance(expected, int)
+                and path is not None
+                and path.stat().st_size != expected
+            )
+            if path is None or stale:
                 broken.append(str(name))
 
     leftover = any(
@@ -638,6 +684,11 @@ class ModelInstaller:
                     written = self._fetch(task, slot, url, target, part)
                 except _Cancelled:
                     raise
+                except _TooSlow as exc:
+                    # 重试同一个慢源没有意义（它慢是常态，不会突然变快），直接换下一个
+                    errors.append(str(exc))
+                    task.report(message=f"{_host(url)} 速度太慢，换下一个下载源")
+                    break
                 except httpx.HTTPError as exc:
                     errors.append(f"{_host(url)}：{exc.__class__.__name__}")
                 except OSError as exc:
@@ -679,11 +730,23 @@ class ModelInstaller:
             written = existing
             mode = "ab" if resuming else "wb"
             with part.open(mode) as handle:
+                started = time.monotonic()
+                checked_at = started
                 for chunk in response.iter_bytes(CHUNK_BYTES):
                     if task.cancel.is_set():
                         raise _Cancelled("下载已取消")
                     handle.write(chunk)
                     written += len(chunk)
+                    now = time.monotonic()
+                    if now - checked_at >= SLOW_CHECK_SECONDS:
+                        checked_at = now
+                        # 只在确实下了一些之后才判速：建连接加等首包就要好几秒，
+                        # 那段时间的均速低得没有意义（断点续传时 existing 也不计入本次均速）
+                        fetched = written - existing
+                        if fetched >= SLOW_MIN_BYTES:
+                            speed = fetched / (now - started)
+                            if speed < SLOW_BYTES_PER_SEC:
+                                raise _TooSlow(f"{_host(url)} 只有 {speed / 1024:.0f} KB/s")
                     if total:
                         task.report(
                             percent=min(99, int(written / total * 100)),

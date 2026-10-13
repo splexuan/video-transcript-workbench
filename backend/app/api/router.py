@@ -63,7 +63,7 @@ from app.infrastructure.cover_store import cover_path
 from app.infrastructure.credential_store import all_status
 from app.infrastructure.database import get_session
 from app.infrastructure.media import tools_ready
-from app.infrastructure.model_catalog import require_spec
+from app.infrastructure.model_catalog import RECOGNITION_ENGINES, require_spec
 from app.infrastructure.models import Document, Job, JobBatch
 from app.schemas import (
     AiSummarizeRequest,
@@ -97,9 +97,16 @@ def validated_model_id(model_id: str | None) -> str | None:
     if not model_id:
         return None
     try:
-        require_spec(model_id)
+        spec = require_spec(model_id)
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 光有规格还不够：标点恢复与语音合成也在同一个模型目录里，它们能通过存在性检查，
+    # 却会被当成识别模型跑（任务卡片上还会挂着那个模型名），所以在入口就挡掉。
+    if spec.engine not in RECOGNITION_ENGINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"「{spec.name}」不能用于识别，请选择识别模型",
+        )
     return model_id
 
 

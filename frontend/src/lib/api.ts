@@ -206,6 +206,8 @@ export const api = {
   ttsJobs: () => request<TtsJob[]>('/api/tts/jobs'),
   ttsJob: (id: string) => request<TtsJob>(`/api/tts/jobs/${id}`),
   cancelTtsJob: (id: string) => request<TtsJob>(`/api/tts/jobs/${id}/cancel`, { method: 'POST' }),
+  /** 清空所有已结束的合成记录与音频；正在合成的那条不动。 */
+  clearTtsJobs: () => request<{ removed: number }>('/api/tts/jobs', { method: 'DELETE' }),
   deleteTtsJob: (id: string) =>
     request<{ id: string; removed: boolean }>(`/api/tts/jobs/${id}`, { method: 'DELETE' }),
   /** 音频地址：播放用 inline，下载加 download=1（后端按它决定 Content-Disposition）。 */

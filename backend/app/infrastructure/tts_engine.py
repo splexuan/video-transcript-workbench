@@ -81,8 +81,9 @@ class Voice:
 
 # 模型包自带的参考音频及其**精确**文本。文本必须与音频逐字一致，否则克隆出的音色会明显变差，
 # 所以这三份写死在代码里，不去解析包里的 prompt.txt（那个文件的格式没有稳定约定）。
+# 显示名是产品侧定的：id 只对应包里的示例音频（来自公开演讲片段），与本人无关、也不代表授权。
 _BUILTIN_VOICES = (
-    Voice("leijun-1", "男声 · 新闻播报", "那还是三十六年前, 一九八七年. 我呢考上了武汉大学的计算机系.", True),
+    Voice("leijun-1", "雷总", "那还是三十六年前, 一九八七年. 我呢考上了武汉大学的计算机系.", True),
     Voice("news-female", "女声 · 现场连线", "各位村民, 大家新年好! 近期, 湖北省武汉市等多个地区", True),
     Voice(
         "news-female-2",
@@ -381,6 +382,41 @@ def load_reference(voice: Voice, model_id: str) -> tuple[np.ndarray, int]:
     return samples, int(rate)
 
 
+# ZipVoice 的模型文件要「成对」挑：编码器与解码器必须同代同精度，否则可能把 int8 的编码器
+# 配上 fp32 的解码器。int8 排在前面——它体积小、速度快，是默认那一档；想要更高精度就装
+# fp32 的包（另一个规格），那种目录里只有 fp32 的文件，顺序不影响。
+_MODEL_PAIRS = (
+    ("encoder.int8.onnx", "decoder.int8.onnx"),
+    ("text_encoder_int8.onnx", "fm_decoder_int8.onnx"),
+    ("encoder.onnx", "decoder.onnx"),
+    ("text_encoder.onnx", "fm_decoder.onnx"),
+)
+
+
+def _pick_model_pair(directory: Path) -> tuple[Path, Path]:
+    """按精度成对挑出编码器与解码器；两代布局的文件名都认。"""
+
+    for encoder_name, decoder_name in _MODEL_PAIRS:
+        encoder = directory / encoder_name
+        decoder = directory / decoder_name
+        if encoder.is_file() and decoder.is_file():
+            return encoder, decoder
+    raise EngineUnavailableError("语音模型缺少模型文件，请重新下载")
+
+
+def _require_lexicon(directory: Path) -> Path:
+    """拼音词典。
+
+    sherpa-onnx 的 ZipVoice 实现必须要有 lexicon.txt——缺了它会在构造时**直接中止进程**，
+    连 Python 异常都抛不出来（实测踩过），所以这里先自己查一遍，把话说清楚。
+    """
+
+    lexicon = directory / "lexicon.txt"
+    if not lexicon.is_file():
+        raise EngineUnavailableError("语音模型缺少拼音词典（lexicon.txt），请重新下载模型")
+    return lexicon
+
+
 def get_tts(model_id: str = DEFAULT_MODEL_ID, lane: int = 0):
     """按「模型 id + 槽位」缓存的实例；线程数变化时才重建。
 
@@ -402,16 +438,8 @@ def get_tts(model_id: str = DEFAULT_MODEL_ID, lane: int = 0):
         if cached is not None and cached[1] == key:
             return cached[0]
 
-        # int8 与 fp32 版只差模型文件名，具体名字随上游发布可能变，所以逐个探测
-        def pick(*names: str) -> Path:
-            for name in names:
-                candidate = directory / name
-                if candidate.is_file():
-                    return candidate
-            raise EngineUnavailableError("语音模型缺少模型文件，请重新下载")
-
-        encoder = pick("encoder.int8.onnx", "encoder.onnx")
-        decoder = pick("decoder.int8.onnx", "decoder.onnx")
+        encoder, decoder = _pick_model_pair(directory)
+        lexicon = _require_lexicon(directory)
 
         # feat_scale / guidance_scale / t_shift / target_rms 一律不传：官方示例也是全默认，
         # 自己填值会改变响度条件（实测 target_rms=0.1 会让输出掉到 -37dBFS，听着全是沙沙声）。
@@ -422,7 +450,7 @@ def get_tts(model_id: str = DEFAULT_MODEL_ID, lane: int = 0):
                     decoder=str(decoder),
                     vocoder=str(directory / "vocos_24khz.onnx"),
                     tokens=str(directory / "tokens.txt"),
-                    lexicon=str(directory / "lexicon.txt"),
+                    lexicon=str(lexicon),
                     data_dir=str(directory / "espeak-ng-data"),
                 ),
                 num_threads=threads,

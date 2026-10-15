@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import soundfile as sf
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -47,6 +48,16 @@ def _reference_wav_bytes() -> bytes:
     buffer = io.BytesIO()
     import soundfile as sf
 
+    sf.write(buffer, tone.astype(np.float32), rate, format="WAV", subtype="PCM_16")
+    return buffer.getvalue()
+
+
+def _longer_reference_wav_bytes() -> bytes:
+    """6 秒的参考音频：裁剪用例需要一段明显长于选区的素材。"""
+
+    rate = 24000
+    tone = 0.3 * np.sin(2 * np.pi * 200 * np.arange(rate * 6) / rate)
+    buffer = io.BytesIO()
     sf.write(buffer, tone.astype(np.float32), rate, format="WAV", subtype="PCM_16")
     return buffer.getvalue()
 
@@ -615,6 +626,305 @@ def test_voice_endpoints_manage_custom_voices(tmp_path, monkeypatch) -> None:
         assert client.delete(f"/api/tts/voices/{voice_id}").json()["removed"] is True
         # 内置音色删不掉
         assert client.delete("/api/tts/voices/leijun-1").status_code == 400
+
+
+def test_trim_voice_keeps_only_the_selected_window(tmp_path, monkeypatch) -> None:
+    """裁剪是「就地」发生的：id 与目录不变，音频与时长都换成选区那一段。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "参考文本。", _longer_reference_wav_bytes())
+
+    edit = tts_engine.trim_voice(voice.id, 1.0, 4.0)
+
+    assert edit.voice.id == voice.id
+    assert edit.voice.seconds == pytest.approx(3.0, abs=0.05)
+    # 裁剪不动参考文本：用户没要求改，就不该被悄悄换掉
+    assert edit.voice.reference_text == "参考文本。"
+    assert edit.text_source == "kept"
+    assert tts_engine.find_voice(voice.id).seconds == pytest.approx(3.0, abs=0.05)
+    stored, rate = sf.read(str(tts_engine.reference_path(voice.id)), dtype="float32")
+    assert stored.size / rate == pytest.approx(3.0, abs=0.05)
+
+
+def test_trim_rejects_windows_that_are_too_short(tmp_path, monkeypatch) -> None:
+    """太短的选区克隆出的音色不稳，要在保存前就说清楚，而不是留一个必然难听的声音。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "参考文本。", _longer_reference_wav_bytes())
+
+    with pytest.raises(ValueError, match="太短"):
+        tts_engine.trim_voice(voice.id, 0.0, 1.0)
+    # 失败后原音频保持不变
+    assert tts_engine.find_voice(voice.id).seconds == pytest.approx(6.0, abs=0.05)
+
+
+def test_trim_clamps_an_out_of_range_selection(tmp_path, monkeypatch) -> None:
+    """界面上拖出来的选区常常略微越界，这不该让一次本来没问题的操作失败。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "参考文本。", _longer_reference_wav_bytes())
+
+    edit = tts_engine.trim_voice(voice.id, 4.0, 99.0)
+
+    assert edit.voice.seconds == pytest.approx(2.0, abs=0.05)
+
+
+def test_reference_text_keeps_its_old_value_when_transcribe_fails(tmp_path, monkeypatch) -> None:
+    """替换音频时转写没成功，宁可沿用旧文本：抹掉会得到一个「没有参考文本」的音色。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "原来的参考文本。", _longer_reference_wav_bytes())
+
+    def boom(_audio: bytes):
+        raise EngineUnavailableError("缺少识别模型")
+
+    monkeypatch.setattr(tts_engine, "transcribe_reference", boom)
+    edit = tts_engine.replace_voice_audio(voice.id, _reference_wav_bytes())
+
+    assert edit.text_source == "kept"
+    assert edit.voice.reference_text == "原来的参考文本。"
+    assert "缺少识别模型" in edit.note
+
+
+def test_replacing_audio_reuses_the_typed_text_first(tmp_path, monkeypatch) -> None:
+    """手填优先于转写：用户亲手核对过的文字比识别结果更可信。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "原来的参考文本。", _longer_reference_wav_bytes())
+    monkeypatch.setattr(
+        tts_engine,
+        "transcribe_reference",
+        lambda _audio: ("不该被调用", 1.0, False),
+    )
+
+    edit = tts_engine.replace_voice_audio(
+        voice.id, _reference_wav_bytes(), name="新名字", reference_text="新音频里说的话。"
+    )
+
+    assert edit.text_source == "typed"
+    assert edit.voice.name == "新名字"
+    assert edit.voice.reference_text == "新音频里说的话。"
+
+
+def test_rename_does_not_move_the_audio(tmp_path, monkeypatch) -> None:
+    """音色 id 就是目录名，所以改名只是改元数据——参考音频必须留在原处。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "参考文本。", _reference_wav_bytes())
+    before = tts_engine.reference_path(voice.id).read_bytes()
+
+    renamed = tts_engine.rename_custom_voice(voice.id, "  口播音色  ")
+
+    assert renamed.id == voice.id
+    assert renamed.name == "口播音色"
+    assert tts_engine.reference_path(voice.id).read_bytes() == before
+
+
+def test_retranscribe_voice_rewrites_the_reference_text(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "手打的旧文本。", _reference_wav_bytes())
+    monkeypatch.setattr(
+        tts_engine,
+        "transcribe_reference",
+        lambda _audio: ("重新转写出来的文本。", 1.0, False),
+    )
+
+    updated = tts_engine.retranscribe_voice(voice.id)
+
+    assert updated.reference_text == "重新转写出来的文本。"
+    assert tts_engine.find_voice(voice.id).reference_text == "重新转写出来的文本。"
+
+
+def test_retranscribe_reports_failure_instead_of_silently_skipping(tmp_path, monkeypatch) -> None:
+    """这是用户明确发起的动作，静默跳过只会让他以为文字已经更新了。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "手打的旧文本。", _reference_wav_bytes())
+
+    def boom(_audio: bytes):
+        raise ValueError("没听清这段音频里说了什么")
+
+    monkeypatch.setattr(tts_engine, "transcribe_reference", boom)
+    with pytest.raises(ValueError, match="没听清"):
+        tts_engine.retranscribe_voice(voice.id)
+    assert tts_engine.find_voice(voice.id).reference_text == "手打的旧文本。"
+
+
+def test_builtin_voice_reference_cannot_be_edited(tmp_path, monkeypatch) -> None:
+    """内置音色的参考音频来自模型包，改它等于改了模型的示例文件。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    with pytest.raises(ValueError, match="内置音色"):
+        tts_engine.trim_voice(tts_engine.DEFAULT_VOICE, 0.0, 3.0)
+    with pytest.raises(ValueError, match="内置音色"):
+        tts_engine.rename_custom_voice(tts_engine.DEFAULT_VOICE, "改名")
+
+
+def test_voice_edit_endpoints(tmp_path, monkeypatch) -> None:
+    """编辑链路走接口：建音色 → 试听音频 → 裁剪 → 改名 → 重新转写 → 删除。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    init_database()
+    monkeypatch.setattr(
+        tts_engine,
+        "transcribe_reference",
+        lambda _audio: ("裁剪后重新转写的内容。", 3.0, False),
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/tts/voices",
+            data={"name": "我的声音", "reference_text": "参考文本内容。"},
+            files={"audio": ("ref.wav", _longer_reference_wav_bytes(), "audio/wav")},
+        )
+        assert created.status_code == 201
+        voice = created.json()
+        voice_id = voice["id"]
+        assert voice["audio_url"] == f"/api/tts/voices/{voice_id}/audio"
+        assert voice["seconds"] == pytest.approx(6.0, abs=0.05)
+
+        # 波形编辑要拿到原始音频才画得出波形
+        audio = client.get(f"/api/tts/voices/{voice_id}/audio")
+        assert audio.status_code == 200
+        assert audio.headers["content-type"] == "audio/wav"
+        assert len(audio.content) > 44
+
+        trimmed = client.post(
+            f"/api/tts/voices/{voice_id}/trim",
+            json={"start": 1.0, "end": 4.0, "retranscribe": True},
+        )
+        assert trimmed.status_code == 200
+        assert trimmed.json()["voice"]["seconds"] == pytest.approx(3.0, abs=0.05)
+        assert trimmed.json()["text_source"] == "transcribed"
+
+        renamed = client.patch(f"/api/tts/voices/{voice_id}", json={"name": "口播音色"})
+        assert renamed.status_code == 200
+        assert renamed.json()["voice"]["name"] == "口播音色"
+
+        # 内置音色与不存在的音色都要明确拒绝，而不是 500
+        assert client.post("/api/tts/voices/leijun-1/trim", json={"start": 0, "end": 3}).status_code == 400
+        assert client.get("/api/tts/voices/nope/audio").status_code == 404
+        assert client.post("/api/tts/voices/nope/trim", json={"start": 0, "end": 3}).status_code == 400
+
+        assert client.delete(f"/api/tts/voices/{voice_id}").json()["removed"] is True
+
+
+def test_transcribe_voice_window_uses_the_selection_and_writes_nothing(tmp_path, monkeypatch) -> None:
+    """编辑弹窗的「重新转写」：只转写选中的那一段，且不动盘。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "手打的旧文本。", _longer_reference_wav_bytes())
+    captured: dict[str, float | None] = {}
+    real = tts_engine.trim_window
+
+    def spy(audio: bytes, start, end):
+        captured["start"], captured["end"] = start, end
+        return real(audio, start, end)
+
+    monkeypatch.setattr(tts_engine, "trim_window", spy)
+    monkeypatch.setattr(
+        tts_engine,
+        "transcribe_reference",
+        lambda audio: (f"选区内的文字（{len(audio)} 字节）", 3.0, False),
+    )
+
+    window = tts_engine.transcribe_voice_window(voice.id, 1.0, 4.0)
+
+    assert captured == {"start": 1.0, "end": 4.0}
+    assert window.text.startswith("选区内的文字")
+    assert window.seconds == 3.0
+    # 不写盘：元数据与音频都得原样
+    assert tts_engine.find_voice(voice.id).reference_text == "手打的旧文本。"
+
+
+def test_transcribe_voice_window_keeps_text_on_failure(tmp_path, monkeypatch) -> None:
+    """转写失败要报错，让界面保留原文——静默跳过等于骗用户。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    voice = tts_engine.save_custom_voice("我的音色", "手打的旧文本。", _longer_reference_wav_bytes())
+
+    def boom(_audio: bytes):
+        raise ValueError("没听清这段音频里说了什么")
+
+    monkeypatch.setattr(tts_engine, "transcribe_reference", boom)
+    with pytest.raises(ValueError, match="没听清"):
+        tts_engine.transcribe_voice_window(voice.id, 0.0, 3.0)
+    assert tts_engine.find_voice(voice.id).reference_text == "手打的旧文本。"
+
+
+def test_preview_transcript_endpoint_leaves_the_voice_alone(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    init_database()
+    monkeypatch.setattr(
+        tts_engine,
+        "transcribe_reference",
+        lambda _audio: ("按选区转写的内容。", 3.0, False),
+    )
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/tts/voices",
+            data={"name": "我的声音", "reference_text": "原来的参考文本。"},
+            files={"audio": ("ref.wav", _longer_reference_wav_bytes(), "audio/wav")},
+        )
+        voice_id = created.json()["id"]
+
+        preview = client.post(
+            f"/api/tts/voices/{voice_id}/preview-transcript",
+            json={"start": 1.0, "end": 4.0},
+        )
+        assert preview.status_code == 200
+        assert preview.json()["text"] == "按选区转写的内容。"
+        # 接口只是回填编辑框，音色本身不能被动过
+        assert client.get("/api/tts/voices").json()
+        assert tts_engine.find_voice(voice_id).reference_text == "原来的参考文本。"
+
+        assert client.post("/api/tts/voices/leijun-1/preview-transcript", json={}).status_code == 400
+        assert client.post("/api/tts/voices/nope/preview-transcript", json={}).status_code == 400
+
+
+def test_creating_a_voice_trims_to_the_given_window(tmp_path, monkeypatch) -> None:
+    """新建时的选区：转写与保存取同一段，所以文字不会比音频长。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    init_database()
+    captured: dict[str, bytes] = {}
+    real = tts_engine.trim_window
+
+    def spy(audio: bytes, start, end):
+        window = real(audio, start, end)
+        captured["window"] = window
+        return window
+
+    monkeypatch.setattr(tts_engine, "trim_window", spy)
+    monkeypatch.setattr(
+        tts_engine,
+        "transcribe_reference",
+        lambda audio: (f"选区内的文字（{len(audio)} 字节）", 3.0, False),
+    )
+
+    with TestClient(app) as client:
+        transcribed = client.post(
+            "/api/tts/voices/transcribe",
+            data={"start": "1.0", "end": "4.0"},
+            files={"audio": ("ref.wav", _longer_reference_wav_bytes(), "audio/wav")},
+        )
+        created = client.post(
+            "/api/tts/voices",
+            data={
+                "name": "我的声音",
+                "reference_text": transcribed.json()["text"],
+                "start": "1.0",
+                "end": "4.0",
+            },
+            files={"audio": ("ref.wav", _longer_reference_wav_bytes(), "audio/wav")},
+        )
+
+    assert transcribed.status_code == 200
+    assert created.status_code == 201
+    # 转写与保存两次请求取到的必须是同一段，否则核对时文字会和音频对不上
+    assert captured["window"] == tts_engine.trim_window(_longer_reference_wav_bytes(), 1.0, 4.0)
+    assert created.json()["seconds"] == pytest.approx(3.0, abs=0.05)
 
 
 def test_retired_model_id_in_settings_does_not_break_the_page(tmp_path, monkeypatch) -> None:

@@ -30,7 +30,11 @@ from app.schemas import (
     TtsModelOption,
     TtsSynthesizeRequest,
     TtsTranscribeRead,
+    TtsVoiceEditRead,
     TtsVoiceItem,
+    TtsVoicePreviewRequest,
+    TtsVoiceRenameRequest,
+    TtsVoiceTrimRequest,
 )
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
@@ -131,6 +135,38 @@ def _disposition(filename: str, download: bool) -> dict[str, str]:
     return {"Content-Disposition": f"{kind}; filename*=UTF-8''{quote(filename)}"}
 
 
+def _voice_item(voice: tts_engine.Voice) -> TtsVoiceItem:
+    """音色的对外表示。自定义音色额外带上参考音频地址，供试听与波形编辑使用。"""
+
+    return TtsVoiceItem(
+        id=voice.id,
+        name=voice.name,
+        reference_text=voice.reference_text,
+        builtin=voice.builtin,
+        seconds=voice.seconds,
+        audio_url=None if voice.builtin else f"/api/tts/voices/{voice.id}/audio",
+    )
+
+
+def _edit_read(edit: tts_engine.ReferenceEdit) -> TtsVoiceEditRead:
+    return TtsVoiceEditRead(
+        voice=_voice_item(edit.voice),
+        text_source=edit.text_source,
+        note=edit.note,
+    )
+
+
+def _trimmed_window(
+    audio: bytes, start: float | None, end: float | None
+) -> bytes:
+    """把上传音频按选区裁成一段 wav。两端都没给就原样返回，不做无谓的重编码。"""
+
+    try:
+        return tts_engine.trim_window(audio, start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("", response_model=TtsConfigRead)
 def tts_config(session: SessionDep) -> TtsConfigRead:
     """语音合成页的配置：可选的模型与音色、当前选择、就绪状态。"""
@@ -152,15 +188,7 @@ def tts_config(session: SessionDep) -> TtsConfigRead:
         message=message,
         model=_option(spec),
         models=[_option(item) for item in specs_for_engine(tts_engine.ENGINE)],
-        voices=[
-            TtsVoiceItem(
-                id=item.id,
-                name=item.name,
-                reference_text=item.reference_text,
-                builtin=item.builtin,
-            )
-            for item in tts_engine.voices()
-        ],
+        voices=[_voice_item(item) for item in tts_engine.voices()],
         voice=_pick_voice(session, None),
         speed=tts_engine.DEFAULT_SPEED,
         max_chars=tts_engine.MAX_CHARS,
@@ -174,22 +202,19 @@ def tts_config(session: SessionDep) -> TtsConfigRead:
 def list_tts_voices() -> list[TtsVoiceItem]:
     """音色清单。内置音色随模型发布，自定义音色由用户上传后出现在这里。"""
 
-    return [
-        TtsVoiceItem(
-            id=item.id,
-            name=item.name,
-            reference_text=item.reference_text,
-            builtin=item.builtin,
-        )
-        for item in tts_engine.voices()
-    ]
+    return [_voice_item(item) for item in tts_engine.voices()]
 
 
 @router.post("/voices/transcribe", response_model=TtsTranscribeRead)
 async def transcribe_tts_voice(
     audio: Annotated[UploadFile, File()],
+    start: Annotated[float | None, Form()] = None,
+    end: Annotated[float | None, Form()] = None,
 ) -> TtsTranscribeRead:
     """转写一段参考音频，给「音色克隆」回填参考文本。
+
+    `start` / `end` 是波形编辑器里的选区（秒）：只转写选中的那一段，
+    这样回填的文字与最终保存的音频是同一段，裁剪后不必再手工删字。
 
     走同步识别（十几秒音频是秒级），但识别是 CPU 密集的阻塞调用，必须丢到线程池里跑，
     否则会把事件循环占住，连带整站接口一起卡住。
@@ -200,9 +225,10 @@ async def transcribe_tts_voice(
         raise HTTPException(status_code=400, detail="请先选择一段参考音频")
     if len(payload) > MAX_REFERENCE_BYTES:
         raise HTTPException(status_code=400, detail="参考音频超过 20 MB，请剪短后再试")
+    window = _trimmed_window(payload, start, end)
     try:
         text, seconds, truncated = await run_in_threadpool(
-            tts_engine.transcribe_reference, payload
+            tts_engine.transcribe_reference, window
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -218,8 +244,12 @@ async def create_tts_voice(
     name: Annotated[str, Form()],
     reference_text: Annotated[str, Form()],
     audio: Annotated[UploadFile, File()],
+    start: Annotated[float | None, Form()] = None,
+    end: Annotated[float | None, Form()] = None,
 ) -> TtsVoiceItem:
     """上传一段参考音频，存成自己的音色。
+
+    `start` / `end` 是可选的选区（秒）：给了就只保存这一段。
 
     ZipVoice 是零样本克隆，参考音频的质量直接决定合成质量：底噪与环境声都会被克隆进去，
     所以这里只做最基础的把关（可读、有声、时长封顶），更细的取舍交给前端提示。
@@ -228,16 +258,131 @@ async def create_tts_voice(
     payload = await audio.read()
     if len(payload) > MAX_REFERENCE_BYTES:
         raise HTTPException(status_code=400, detail="参考音频超过 20 MB，请剪短后再试")
+    window = _trimmed_window(payload, start, end)
     try:
-        voice = tts_engine.save_custom_voice(name, reference_text, payload)
+        voice = tts_engine.save_custom_voice(name, reference_text, window)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return TtsVoiceItem(
-        id=voice.id,
-        name=voice.name,
-        reference_text=voice.reference_text,
-        builtin=voice.builtin,
+    return _voice_item(voice)
+
+
+@router.get("/voices/{voice_id}/audio")
+def tts_voice_audio(voice_id: str) -> Response:
+    """自定义音色的参考音频：试听与波形编辑都用它（存的就是 24kHz 单声道 wav）。"""
+
+    try:
+        path = tts_engine.reference_path(voice_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="参考音频已被删除，请重新上传")
+    return Response(
+        content=path.read_bytes(),
+        media_type="audio/wav",
+        headers=_disposition(f"参考音频-{voice_id}.wav", False),
     )
+
+
+@router.post("/voices/{voice_id}/audio", response_model=TtsVoiceEditRead)
+async def replace_tts_voice_audio(
+    voice_id: str,
+    audio: Annotated[UploadFile, File()],
+    name: Annotated[str | None, Form()] = None,
+    reference_text: Annotated[str | None, Form()] = None,
+    start: Annotated[float | None, Form()] = None,
+    end: Annotated[float | None, Form()] = None,
+) -> TtsVoiceEditRead:
+    """就地换掉某个音色的参考音频（界面上的「重新上传音频」）。
+
+    不复用新建接口：那条路会生成新的音色 id，而这里是覆盖原来那个。
+    替换后参考文本按 手填 → 转写 → 沿用旧值 的顺序定。
+    """
+
+    payload = await audio.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="请先选择一段参考音频")
+    if len(payload) > MAX_REFERENCE_BYTES:
+        raise HTTPException(status_code=400, detail="参考音频超过 20 MB，请剪短后再试")
+    window = _trimmed_window(payload, start, end)
+    try:
+        edit = tts_engine.replace_voice_audio(
+            voice_id,
+            window,
+            name=name or "",
+            reference_text=reference_text or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _edit_read(edit)
+
+
+@router.post("/voices/{voice_id}/trim", response_model=TtsVoiceEditRead)
+async def trim_tts_voice(voice_id: str, payload: TtsVoiceTrimRequest) -> TtsVoiceEditRead:
+    """把参考音频裁到选区。选区越界会被夹到有效范围，不会因此失败。"""
+
+    try:
+        edit = await run_in_threadpool(
+            tts_engine.trim_voice,
+            voice_id,
+            payload.start,
+            payload.end,
+            reference_text=payload.reference_text or "",
+            retranscribe=payload.retranscribe,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except EngineUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except MediaToolError as exc:
+        raise HTTPException(status_code=400, detail=f"无法读取这段音频：{exc}") from exc
+    return _edit_read(edit)
+
+
+@router.patch("/voices/{voice_id}", response_model=TtsVoiceEditRead)
+def rename_tts_voice(voice_id: str, payload: TtsVoiceRenameRequest) -> TtsVoiceEditRead:
+    """改音色名。音色 id 是目录名，与名字无关，所以不用搬任何文件。"""
+
+    try:
+        voice = tts_engine.rename_custom_voice(voice_id, payload.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _edit_read(tts_engine.ReferenceEdit(voice=voice, text_source="typed"))
+
+
+@router.post("/voices/{voice_id}/retranscribe", response_model=TtsVoiceEditRead)
+async def retranscribe_tts_voice(voice_id: str) -> TtsVoiceEditRead:
+    """按当前参考音频重新转写一遍参考文本（识别不可用或没听清时明确报错，不静默跳过）。"""
+
+    try:
+        voice = await run_in_threadpool(tts_engine.retranscribe_voice, voice_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except EngineUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except MediaToolError as exc:
+        raise HTTPException(status_code=400, detail=f"无法读取这段音频：{exc}") from exc
+    return _edit_read(tts_engine.ReferenceEdit(voice=voice, text_source="transcribed"))
+
+
+@router.post("/voices/{voice_id}/preview-transcript", response_model=TtsTranscribeRead)
+async def preview_voice_transcript(voice_id: str, payload: TtsVoicePreviewRequest) -> TtsTranscribeRead:
+    """按选区转写已保存的参考音频，**不写盘**：只把文字回填给编辑框。
+
+    界面上的选区是这段音色的全部真相：转写整段的话，文字会比用户选中的那截长，
+    照着核对永远对不上。识别不可用时明确报错，原文本原样留在框里。
+    """
+
+    try:
+        window = await run_in_threadpool(
+            tts_engine.transcribe_voice_window, voice_id, payload.start, payload.end
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except EngineUnavailableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except MediaToolError as exc:
+        raise HTTPException(status_code=400, detail=f"无法读取这段音频：{exc}") from exc
+    return TtsTranscribeRead(text=window.text, seconds=window.seconds, truncated=window.truncated)
 
 
 @router.delete("/voices/{voice_id}")

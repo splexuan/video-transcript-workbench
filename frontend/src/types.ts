@@ -231,6 +231,28 @@ export interface TtsVoice {
   reference_text: string
   /** 内置音色不可删除。 */
   builtin: boolean
+  /** 参考音频时长（秒）：画波形、判断选区是否过短都要它；内置音色为 0。 */
+  seconds: number
+  /** 自定义音色的参考音频地址（试听与波形编辑都用它）；内置音色为 null。 */
+  audio_url: string | null
+}
+
+/**
+ * 参考音频改动后的回执。
+ *
+ * `text_source` 说明参考文本是怎么来的：手填 / 转写 / 沿用旧值。最后一种发生在
+ * 转写没成功时——界面要如实说明（`note`），别让用户以为文字已经换成新的了。
+ */
+export interface TtsVoiceEditResult {
+  voice: TtsVoice
+  text_source: 'typed' | 'transcribed' | 'kept'
+  note: string
+}
+
+/** 波形编辑器里的一段选区（秒）；`start === 0 && end === 0` 表示还没加载音频。 */
+export interface AudioSelection {
+  start: number
+  end: number
 }
 
 /** 「音色克隆」里自动转写的结果：文字给用户核对，`truncated` 表示参考音频只取了开头一段。 */

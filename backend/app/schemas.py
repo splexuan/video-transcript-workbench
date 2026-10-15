@@ -246,6 +246,47 @@ class TtsVoiceItem(BaseModel):
     # 这段参考音频里逐字说出的内容：必须与音频一致，否则克隆出的音色会明显变差
     reference_text: str
     builtin: bool
+    # 参考音频时长（秒）：前端画波形、判断选区是否过短都要它；内置音色为 0
+    seconds: float = 0.0
+    # 自定义音色的参考音频地址（用于试听与波形编辑）；内置音色为 null
+    audio_url: str | None = None
+
+
+class TtsVoiceTrimRequest(BaseModel):
+    """把参考音频裁到 [start, end] 秒。
+
+    `retranscribe` 为真时按裁剪后的音频重新转写参考文本——不动文本的话，
+    文本与音频就对不上了，而对不上正是克隆质量下降的主因。
+    """
+
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    reference_text: str | None = Field(default=None, max_length=500)
+    retranscribe: bool = False
+
+
+class TtsVoiceRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+
+
+class TtsVoicePreviewRequest(BaseModel):
+    """按选区重新转写已保存的参考音频（只回填文本，不落盘）。
+
+    两端都不给就等于转写整段，因此允许缺省。
+    """
+
+    start: float | None = Field(default=None, ge=0)
+    end: float | None = Field(default=None, gt=0)
+
+
+class TtsVoiceEditRead(BaseModel):
+    """一次参考音频改动后的回执：更新后的音色 + 该怎么告诉用户结果。"""
+
+    voice: TtsVoiceItem
+    # 参考文本的来源：手填 / 转写 / 沿用旧值
+    text_source: str = "typed"
+    # 需要如实告知用户的原因（转写失败之类）；成功时为空
+    note: str = ""
 
 
 class TtsVoiceCreate(BaseModel):

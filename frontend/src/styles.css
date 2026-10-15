@@ -496,6 +496,10 @@ button:disabled {
 .modal-overlay.closing {
   opacity: 0;
 }
+/* 叠在另一个弹窗之上的那一层（音色编辑叠在音色克隆之上） */
+.modal-overlay.top {
+  z-index: 60;
+}
 .modal-dialog {
   display: flex;
   flex-direction: column;
@@ -955,6 +959,91 @@ button:disabled {
   font-size: var(--text-sm);
   color: var(--text-muted);
 }
+/*
+ * 上传控件：原生 file input 只有一个「选择文件」按钮，看不出这是什么、也不知道
+ * 能不能拖进来。这里把它透明盖在整块卡片上（点击任意处都能选、键盘也能 Tab 到），
+ * 露出来的是图标 + 说明 + 已选文件信息。
+ */
+.tts-drop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1.5px dashed color-mix(in srgb, var(--border) 82%, var(--text-muted));
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  cursor: pointer;
+  transition: border-color var(--ease), background-color var(--ease), transform var(--ease);
+}
+.tts-drop.compact {
+  padding: 10px 14px;
+}
+.tts-drop:hover,
+.tts-drop.over {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.tts-drop.over {
+  transform: scale(1.005);
+}
+.tts-drop.filled {
+  border-style: solid;
+}
+.tts-drop:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.tts-drop input[type='file'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+.tts-drop-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.tts-drop.compact .tts-drop-icon {
+  width: 28px;
+  height: 28px;
+}
+.tts-drop-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.tts-drop-text strong {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tts-drop-text small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.tts-drop-act {
+  margin-left: auto;
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--primary);
+  background: var(--surface);
+  font-size: var(--text-2xs);
+}
 .tts-tips {
   margin: 0;
   padding-left: 20px;
@@ -1022,6 +1111,24 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 音色名 + 时长；时长是判断「要不要剪」的第一眼依据，所以跟着名字一起显示 */
+.tts-mine-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.tts-mine-name small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  flex: none;
+}
+.tts-mine li > .tts-mine-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  overflow: visible;
+}
 /* 当前模型条：装好之后也要一直看得见用的是哪个模型，并能就地切换 */
 .tts-model-bar {
   display: flex;
@@ -1059,6 +1166,141 @@ button:disabled {
 .tts-preview small {
   color: var(--text-muted);
   font-size: var(--text-2xs);
+}
+/* ---------- 参考音频波形裁剪 ---------- */
+.tts-wave {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+}
+.tts-wave-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.tts-wave-head small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: 400;
+}
+.tts-wave-area {
+  position: relative;
+  height: 76px;
+  border-radius: 6px;
+  /* 底色带一点主色：波形本身就是主色，底色太中性会让两者显得不属于同一张图 */
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+  overflow: hidden;
+  touch-action: none;
+  cursor: crosshair;
+}
+.tts-wave-area:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.tts-wave-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.tts-wave-sel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  cursor: grab;
+  pointer-events: none;
+}
+/*
+ * 手柄做成「竖线 + 中间抓手」，而不是一条粗色柱：
+ * 整根柱子在选区贴边时会变成一道 10px 宽的竖条，看着像边框，不像可拖的东西。
+ */
+.tts-wave-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: ew-resize;
+  /* 用百分比定位 + 自身居中：靠 margin 凑偏移的话，选区贴边时手柄会有一半
+     落在容器外，指针按在可见的那半截上反而抓不到它 */
+  transform: translateX(-50%);
+}
+.tts-wave-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: color-mix(in srgb, var(--primary) 75%, transparent);
+}
+.tts-wave-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 24px;
+  margin: -12px 0 0 -4px;
+  border-radius: 3px;
+  background: var(--primary);
+  box-shadow: 0 1px 5px color-mix(in srgb, var(--text) 30%, transparent);
+  transition: transform var(--ease);
+}
+.tts-wave-handle:hover::after,
+.tts-wave-handle:focus-visible::after {
+  transform: scale(1.18);
+}
+.tts-wave-handle:focus-visible {
+  outline: none;
+}
+.tts-wave-handle:hover::before,
+.tts-wave-handle:focus-visible::before {
+  background: var(--primary);
+}
+.tts-wave-handle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.tts-wave-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tts-wave-read {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+.tts-wave-note,
+.tts-wave-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.tts-wave-note.ok {
+  color: var(--success, var(--text-muted));
+}
+.tts-wave-note.warning {
+  color: var(--warning);
+}
+.tts-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 .form-message.warning {
   color: var(--warning);

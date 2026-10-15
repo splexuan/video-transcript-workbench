@@ -23,13 +23,14 @@ import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import soundfile as sf
 
 from app.config import settings
 from app.domain import EngineUnavailableError
-from app.infrastructure.media import convert_to_wav, find_tool, probe_media
+from app.infrastructure.media import MediaToolError, convert_to_wav, find_tool, probe_media
 from app.infrastructure.model_catalog import require_spec
 from app.infrastructure.model_store import is_complete, spec_dir
 from app.infrastructure.text_numbers import normalize_chinese_numbers
@@ -65,7 +66,15 @@ _lock = threading.Lock()
 _cache: dict[tuple[str, int], tuple[object, str]] = {}
 
 
-@dataclass(frozen=True, slots=True)
+class AsrWindow(NamedTuple):
+    """一次转写的结果：文字、时长（秒）、是否因超出可用长度被截断。"""
+
+    text: str
+    seconds: float
+    truncated: bool
+
+
+@dataclass
 class Voice:
     """一个可用音色。
 
@@ -77,6 +86,22 @@ class Voice:
     name: str
     reference_text: str
     builtin: bool
+    # 参考音频时长（秒）。内置音色不参与编辑，没有这个数（0）。
+    seconds: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceEdit:
+    """一次参考音频改动（新建 / 替换 / 裁剪）的结果。
+
+    `text_source` 说明参考文本是怎么来的：手填 `typed`、重新转写 `transcribed`、
+    沿用旧值 `kept`——最后一种发生在转写没成功时，把文本抹掉比留着更糟。
+    `note` 带着需要如实告诉用户的原因（转写失败之类）。
+    """
+
+    voice: Voice
+    text_source: str
+    note: str = ""
 
 
 # 模型包自带的参考音频及其**精确**文本。文本必须与音频逐字一致，否则克隆出的音色会明显变差，
@@ -97,6 +122,10 @@ DEFAULT_VOICE = "leijun-1"
 # 参考音频的时长上限。ZipVoice 的耗时随参考音频长度增长明显（实测短参考 RTF 0.47、
 # 长的到 1.9），超过这个长度直接截断并给提示。
 REFERENCE_MAX_SECONDS = 20.0
+# 裁剪时的下界：比这更短的片段克隆出的音色不稳，所以直接拒绝而不是默默接受。
+REFERENCE_MIN_SECONDS = 2.0
+# 界面据此给建议区间（也是 ZipVoice 官方示例推荐的参考音频长度）。
+REFERENCE_RECOMMENDED = (3.0, 10.0)
 
 
 def lanes(cores: int | None = None) -> int:
@@ -178,7 +207,23 @@ def _load_custom(voice_id: str) -> Voice | None:
         return None
     if not reference_text or not (directory / "reference.wav").is_file():
         return None
-    return Voice(voice_id, name, reference_text, False)
+    return Voice(voice_id, name, reference_text, False, _read_seconds(directory, payload))
+
+
+def _read_seconds(directory: Path, payload: dict) -> float:
+    """参考音频时长。优先信元数据里的秒数，早期音色没写这个字段时就量一遍文件。"""
+
+    try:
+        recorded = float(payload.get("seconds", 0.0))
+    except (TypeError, ValueError):
+        recorded = 0.0
+    if recorded > 0:
+        return round(recorded, 2)
+    try:
+        return duration_seconds(*sf.read(str(directory / "reference.wav"), dtype="float32"))
+    except Exception:  # noqa: BLE001 - 量不出时长不该让整个音色从清单里消失
+        logger.warning("读取参考音频时长失败：%s", directory, exc_info=True)
+        return 0.0
 
 
 def voices() -> list[Voice]:
@@ -216,8 +261,18 @@ def resolve_voice(voice_id: str | None) -> Voice:
     return find_voice(voice_id) or find_voice(DEFAULT_VOICE)
 
 
-def save_custom_voice(name: str, reference_text: str, audio: bytes) -> Voice:
+def save_custom_voice(
+    name: str,
+    reference_text: str,
+    audio: bytes,
+    *,
+    start: float | None = None,
+    end: float | None = None,
+) -> Voice:
     """存一段用户上传的参考音频，返回新音色。
+
+    `start` / `end` 是可选的选区（秒）：给了就只取这一段，所以「转写出来的文字」
+    与「最终落盘的音频」始终是同一段，不会出现文字比音频长的错位。
 
     统一转成 24kHz 单声道 WAV：ZipVoice 的参考音频与输出同率最省事，也能顺手把立体声、
     过长录音这类问题在入口就挡掉。
@@ -226,47 +281,292 @@ def save_custom_voice(name: str, reference_text: str, audio: bytes) -> Voice:
     text = (reference_text or "").strip()
     if not text:
         raise ValueError("请填写这段音频里说出的文字，它必须和音频逐字一致")
+    return _place_reference(
+        audio,
+        voice_id=None,
+        name=name,
+        reference_text=text,
+        start=start,
+        end=end,
+    ).voice
+
+
+def replace_voice_audio(
+    voice_id: str,
+    audio: bytes,
+    *,
+    name: str = "",
+    reference_text: str = "",
+    start: float | None = None,
+    end: float | None = None,
+) -> ReferenceEdit:
+    """就地换掉某个自定义音色的参考音频（界面上的「重新上传音频」）。
+
+    刻意不走 save_custom_voice：那条路会另起一个新音色，而这里是覆盖原来那个。
+    参考文本按 手填 → 转写 → **保留旧值** 的顺序定：把旧文本抹掉比留着更糟——
+    音色会变成「没有参考文本」，得靠人重新来一遍。
+    """
+
+    meta, directory = _require_custom(voice_id)
+    return _place_reference(
+        audio,
+        voice_id=voice_id,
+        directory=directory,
+        name=name or str(meta.get("name", "")),
+        reference_text=reference_text,
+        start=start,
+        end=end,
+        previous_text=str(meta.get("reference_text", "")),
+    )
+
+
+def trim_voice(
+    voice_id: str,
+    start: float,
+    end: float,
+    *,
+    reference_text: str = "",
+    retranscribe: bool = False,
+) -> ReferenceEdit:
+    """把已存音色的参考音频裁到 [start, end] 秒。
+
+    选区会先按真实时长夹住，因此「越界一点」的拖拽结果是可预期的，不会报错。
+    `retranscribe` 为真时按裁剪后的音频重新转写参考文本——不勾就沿用旧文本
+    （前提是用户自己把文本改成选区里说的那些字）。
+    """
+
+    meta, directory = _require_custom(voice_id)
+    path = directory / "reference.wav"
+    payload = path.read_bytes()
+    return _place_reference(
+        payload,
+        voice_id=voice_id,
+        directory=directory,
+        name=str(meta.get("name", "")),
+        reference_text=reference_text,
+        start=start,
+        end=end,
+        previous_text=str(meta.get("reference_text", "")),
+        allow_transcribe=retranscribe,
+    )
+
+
+def rename_custom_voice(voice_id: str, name: str) -> Voice:
+    """改音色名。只动元数据——音色 id 是目录名，与名字无关，所以不用搬文件。"""
+
+    meta, directory = _require_custom(voice_id)
+    label = (name or "").strip()[:40] or "自定义音色"
+    payload = dict(meta)
+    payload["name"] = label
+    _write_meta(directory, payload)
+    return Voice(voice_id, label, str(meta.get("reference_text", "")).strip(), False, _read_seconds(directory, payload))
+
+
+def retranscribe_voice(voice_id: str) -> Voice:
+    """按当前参考音频重新转写一遍参考文本。
+
+    转写失败一律报错（不静默改文本）：这个动作是用户明确发起的，
+    悄悄跳过只会让他以为文字已经更新了。
+    """
+
+    meta, directory = _require_custom(voice_id)
+    text, _seconds, _truncated = transcribe_reference((directory / "reference.wav").read_bytes())
+    payload = dict(meta)
+    payload["reference_text"] = text
+    _write_meta(directory, payload)
+    return Voice(voice_id, str(meta.get("name", "")).strip(), text, False, _read_seconds(directory, payload))
+
+
+def transcribe_voice_window(voice_id: str, start: float | None, end: float | None) -> AsrWindow:
+    """按选区转写已保存的参考音频，**只返回文字、不落盘**。
+
+    与 retranscribe_voice 的区别有两条，都是为了不骗用户：
+      - 转写的是界面上选中的那一段，而不是整段音频——整段转出来的文字比选区长，
+        照着核对只会一直对不上；
+      - 不写 meta.json——编辑弹窗里点「重新转写」只是回填文本框，
+        真要落盘得再点一次「保存修改」。写盘了就变成「看一眼也改了音色」。
+    """
+
+    _meta, directory = _require_custom(voice_id)
+    audio = (directory / "reference.wav").read_bytes()
+    text, seconds, truncated = transcribe_reference(trim_window(audio, start, end))
+    return AsrWindow(text=text, seconds=seconds, truncated=truncated)
+
+
+def reference_path(voice_id: str) -> Path:
+    """自定义音色的参考音频文件；不存在时抛错（内置音色不走这里）。"""
+
+    _meta, directory = _require_custom(voice_id)
+    return directory / "reference.wav"
+
+
+def _require_custom(voice_id: str) -> tuple[dict, Path]:
+    """取自定义音色的元数据与目录；内置音色或已删除都给上层一个明确错误。"""
+
+    if voice_id in {item.id for item in _BUILTIN_VOICES}:
+        raise ValueError("内置音色来自语音模型包，不能改参考音频")
+    directory = _custom_dir() / voice_id
+    meta_path = directory / "meta.json"
+    if not meta_path.is_file():
+        raise ValueError("这个音色已不存在，可能已经被删掉了")
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8")), directory
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise ValueError("这个音色的元数据已损坏，请删除后重新上传") from None
+
+
+def _write_meta(directory: Path, payload: dict) -> None:
+    (directory / "meta.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def trim_window(audio: bytes, start: float | None, end: float | None) -> bytes:
+    """按选区（秒）裁一段上传音频，返回 wav 字节。
+
+    「自动转写」与「保存音色」都要先过这里：转写出来的文字与最终落盘的音频
+    必须是同一段，否则用户看到的文字比音频长，核对时无从下手。
+    两端都不给就原样返回，省掉一次没必要的重编码。
+    """
+
+    if start is None and end is None:
+        return audio
+    mono, rate = _read_wave(audio)
+    mono = _slice(mono, rate, start, end)
+    return _wav_bytes(mono, rate)
+
+
+def _read_wave(audio: bytes) -> tuple[np.ndarray, int]:
+    """读任意格式的参考音频，返回（单声道 float32, 采样率）。"""
+
     if not audio:
         raise ValueError("请先选择或录制一段参考音频")
-
     try:
         samples, rate = sf.read(io.BytesIO(audio), dtype="float32", always_2d=True)
     except Exception as exc:
         # libsndfile 的异常类型很杂（RuntimeError / soundfile.LibsndfileError…），
         # 统一转成一句用户看得懂的话，不要把英文栈直接抛到界面上
         raise ValueError("无法读取这段音频，请换 wav / mp3 / m4a 试试") from exc
+    return samples.mean(axis=1), int(rate)
 
-    mono = samples.mean(axis=1)
+
+def _slice(mono: np.ndarray, rate: int, start: float | None, end: float | None) -> np.ndarray:
+    """按秒取一段。选区为空（两端都没给）表示整段。
+
+    先把选区夹到音频范围内再判长度：界面上拖出来的边界常常略微越界，
+    直接报错会让一次本来没问题的操作失败。
+    """
+
+    if start is None and end is None:
+        return mono
+    total = mono.size / rate
+    begin = 0.0 if start is None else max(0.0, min(float(start), total))
+    finish = total if end is None else max(0.0, min(float(end), total))
+    if finish < begin:
+        begin, finish = finish, begin
+    if finish - begin < REFERENCE_MIN_SECONDS:
+        raise ValueError(
+            f"选区只有 {finish - begin:.1f} 秒，太短了：请至少留 {REFERENCE_MIN_SECONDS:.0f} 秒，"
+            f"{REFERENCE_RECOMMENDED[0]:.0f}~{REFERENCE_RECOMMENDED[1]:.0f} 秒最合适"
+        )
+    return mono[int(round(begin * rate)) : int(round(finish * rate))]
+
+
+def _finalize(mono: np.ndarray, rate: int) -> tuple[np.ndarray, int]:
+    """落盘前的统一处理：对齐 24kHz、封顶时长、峰值归一、去直流。"""
+
     if rate != 24000:
         mono = _resample(mono, rate, 24000)
         rate = 24000
     limit = int(rate * REFERENCE_MAX_SECONDS)
     if mono.size > limit:
         mono = mono[:limit]
-
     peak = float(np.abs(mono).max())
     if peak < 1e-4:
         raise ValueError("这段音频几乎没有声音，换一段有人说话的试试")
     mono = mono / peak * 0.9
-    mono = mono - float(np.mean(mono))
+    return mono - float(np.mean(mono)), rate
 
-    voice_id = uuid.uuid4().hex[:12]
-    directory = _custom_dir() / voice_id
-    directory.mkdir(parents=True, exist_ok=True)
-    sf.write(directory / "reference.wav", mono, rate, subtype="PCM_16")
-    (directory / "meta.json").write_text(
-        json.dumps(
-            {
-                "name": (name or "").strip()[:40] or "自定义音色",
-                "reference_text": text,
-                "seconds": round(mono.size / rate, 2),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+
+def _wav_bytes(mono: np.ndarray, rate: int) -> bytes:
+    """内存里的波形 → wav 字节。写盘与转写走同一份编码，两边不会差出一点偏差。"""
+
+    buffer = io.BytesIO()
+    sf.write(buffer, mono, rate, format="WAV", subtype="PCM_16")
+    return buffer.getvalue()
+
+
+def _resolve_text(
+    reference_text: str,
+    audio: bytes | None,
+    previous: str,
+    *,
+    allow_transcribe: bool = True,
+) -> tuple[str, str, str]:
+    """定下参考文本，返回（文本, 来源, 需要告知用户的原因）。
+
+    顺序是 手填 → 转写 → 保留旧值。转写没成功时保留旧文本：音色会变成
+    「没有参考文本」，得靠人重新来一遍，那比留着一段对不上的文字更糟。
+    """
+
+    typed = (reference_text or "").strip()
+    if typed:
+        return typed, "typed", ""
+    if audio is None or not allow_transcribe:
+        return (previous or "").strip(), "kept", ""
+    try:
+        text, _seconds, _truncated = transcribe_reference(audio)
+    except (ValueError, EngineUnavailableError, MediaToolError) as exc:
+        return (previous or "").strip(), "kept", str(exc)
+    if text.strip():
+        return text.strip(), "transcribed", ""
+    return (previous or "").strip(), "kept", "没有识别出这段音频里说了什么"
+
+
+def _place_reference(
+    audio: bytes,
+    *,
+    voice_id: str | None,
+    name: str,
+    reference_text: str,
+    start: float | None = None,
+    end: float | None = None,
+    previous_text: str = "",
+    directory: Path | None = None,
+    allow_transcribe: bool = True,
+) -> ReferenceEdit:
+    """参考音频落盘的唯一入口：新建、替换、裁剪都走这里。
+
+    **必须共用**：裁剪怎么做、什么时候重采样、文本从哪来，只要三条路径各写一遍，
+    换个入口进来行为就会不一样（比如裁剪那条忘了重采样，克隆出的音色就会变调）。
+    """
+
+    mono, rate = _read_wave(audio)
+    mono = _slice(mono, rate, start, end)
+    mono, rate = _finalize(mono, rate)
+    wav = _wav_bytes(mono, rate)
+
+    text, source, note = _resolve_text(
+        reference_text, wav, previous_text, allow_transcribe=allow_transcribe
     )
-    return Voice(voice_id, (name or "").strip()[:40] or "自定义音色", text, False)
+    if not text:
+        raise ValueError("请填写这段音频里说出的文字，它必须和音频逐字一致")
+
+    if voice_id is None:
+        voice_id = uuid.uuid4().hex[:12]
+        directory = _custom_dir() / voice_id
+    directory.mkdir(parents=True, exist_ok=True)
+    label = (name or "").strip()[:40] or "自定义音色"
+    sf.write(directory / "reference.wav", mono, rate, subtype="PCM_16")
+    _write_meta(
+        directory,
+        {"name": label, "reference_text": text, "seconds": duration_seconds(mono, rate)},
+    )
+    return ReferenceEdit(
+        voice=Voice(voice_id, label, text, False, duration_seconds(mono, rate)),
+        text_source=source,
+        note=note,
+    )
 
 
 def remove_custom_voice(voice_id: str) -> bool:

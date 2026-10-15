@@ -204,6 +204,15 @@ export function SettingsPage() {
     save({ ai_provider: type, ai_model: entry?.default_model ?? '' })
   }
 
+  /**
+   * 存过的默认识别模型现在不在可选项里（模型被移除或不再展示）时，保留一个占位项。
+   * 不做回落覆盖：直接改掉用户的设置会让他们以为模型还在，只提示重新选择。
+   */
+  const staleDefaultModel =
+    settings.default_model && !models.some((model) => model.id === settings.default_model)
+      ? settings.default_model
+      : ''
+
   /** 提交兜底解析的 Key；留空表示不改动，要清除用旁边的「清除」。 */
   function commitApiKey() {
     const value = apiKey.trim()
@@ -246,6 +255,7 @@ export function SettingsPage() {
               <select id="default-model" value={settings.default_model} disabled={modelsLoading || Boolean(modelsError)} aria-describedby={modelsError ? 'default-model-error' : undefined} onChange={(event) => save({ default_model: event.target.value })}>
                 {modelsLoading && <option value={settings.default_model}>正在读取模型…</option>}
                 {!modelsLoading && modelsError && <option value={settings.default_model}>{settings.default_model ? shortModelName(settings.default_model) : '暂不可用'}</option>}
+                {!modelsLoading && !modelsError && staleDefaultModel && <option value={staleDefaultModel}>{shortModelName(staleDefaultModel)}（当前不可用，请重新选择）</option>}
                 {!modelsLoading && !modelsError && models.map((model) => <option key={model.id} value={model.id} disabled={model.state !== 'ready'}>{shortModelName(model.name)}{model.state === 'ready' ? '' : '（未安装）'}</option>)}
               </select>
               {modelsError && <span className="field-error" id="default-model-error" role="alert">{modelsError}<button className="text-button" type="button" onClick={() => { setModelsLoading(true); setModelsError(''); setModelsReloadKey((value) => value + 1) }}>重试</button></span>}

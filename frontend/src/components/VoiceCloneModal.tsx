@@ -1,9 +1,12 @@
-import { LoaderCircle, Mic, Trash2, Upload, Wand2 } from 'lucide-react'
+import { CheckCircle2, LoaderCircle, Mic, Pencil, Play, Trash2, Upload, Wand2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../lib/api'
-import type { TtsVoice } from '../types'
+import { formatBytes } from '../lib/format'
+import type { AudioSelection, TtsVoice } from '../types'
 import { Modal, ModalHeader } from './Modal'
+import { ReferenceAudioEditor } from './ReferenceAudioEditor'
+import { VoiceEditModal } from './VoiceEditModal'
 
 const TIPS = [
   '只用一个人说话，别混背景音乐或其他人的声音',
@@ -22,6 +25,10 @@ function nameFromFile(name: string) {
  *
  * 参考文本必须与音频逐字一致（对不上克隆出的音色会明显变差），手打既费劲又容易打错，
  * 所以默认自动转写、允许改；识别没装时退回手填，不把这条路堵死。
+ *
+ * 波形编辑器是这条链路的一半：参考音频越长 ZipVoice 合成越慢（RTF 从 0.47 到 1.9），
+ * 而开头那几十秒里的底噪又是最常翻车的地方。选区会同时作用于「自动转写」与
+ * 「保存」，所以文字与最终落盘的音频始终是同一段。
  */
 export function VoiceCloneModal({
   onClose,
@@ -34,22 +41,36 @@ export function VoiceCloneModal({
   onCreated: (voiceId: string) => void
   /** 清单变化（新建或删除）后刷新 */
   onChanged: () => void
-  /** 已有的自定义音色：管理（删除）入口放在这里，主页面只留一个下拉框 */
+  /** 已有的自定义音色：管理（编辑 / 删除）入口放在这里，主页面只留一个下拉框 */
   voices: TtsVoice[]
 }) {
   const [file, setFile] = useState<File | null>(null)
+  const [dragOver, setDragOver] = useState(false)
   const [name, setName] = useState('')
   const [text, setText] = useState('')
   const [preview, setPreview] = useState('')
+  const [selection, setSelection] = useState<AudioSelection>({ start: 0, end: 0 })
   const [seconds, setSeconds] = useState(0)
   const [truncated, setTruncated] = useState(false)
   const [busy, setBusy] = useState(false)
   const [removing, setRemoving] = useState('')
+  const [editing, setEditing] = useState<TtsVoice | null>(null)
+  const [playing, setPlaying] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const objectUrl = useRef('')
+  const probe = useRef<HTMLAudioElement>(null)
 
   const mine = voices.filter((item) => !item.builtin)
+  /** 选区是否有效（波形还没解码完时是 0 秒，这时不能拿去裁剪）。 */
+  const hasSelection = selection.end - selection.start > 0.01
+  /**
+   * 选区是否偏离了「从开头到转写长度」这一段，只用来挑提示文案。
+   *
+   * 注意它**不能**拿来决定要不要把选区发给后端：裁剪后重新转写会让两者长度相等，
+   * 一旦据此判定「没裁过」，保存时就会落回整段音频——正是「剪了半天还是完整音频」。
+   */
+  const windowed = selection.start > 0.01 || (hasSelection && seconds > 0 && Math.abs(selection.end - selection.start - seconds) > 0.01)
 
   /** 选文件：立刻给试听地址与默认名称，文本区留空等转写（或手填）。 */
   function pick(next: File | null) {
@@ -86,14 +107,17 @@ export function VoiceCloneModal({
     setError('')
     setNotice('')
     try {
-      const result = await api.transcribeTtsVoice(file)
+      // 带上选区：转写出来的文字要与最终保存的那一段对齐，裁剪后不必手工删字
+      const result = await api.transcribeTtsVoice(file, hasSelection ? selection : undefined)
       setText(result.text)
       setSeconds(result.seconds)
       setTruncated(result.truncated)
       setNotice(
         result.truncated
           ? `这段音频较长，只转写了前 ${Math.round(result.seconds)} 秒（参考音频也只用这一段），请核对文字`
-          : '已自动转写，请核对一下与音频是否一致',
+          : windowed
+            ? '已按你选的片段转写，请核对一下与音频是否一致'
+            : '已自动转写，请核对一下与音频是否一致',
       )
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '转写失败，可以手动填写这段音频里说的话')
@@ -118,6 +142,8 @@ export function VoiceCloneModal({
         name: name.trim() || '我的音色',
         reference_text: text.trim(),
         audio: file,
+        // 选区永远跟着走：波形上选的就是要存的，否则「剪了半天保存还是完整音频」
+        selection: hasSelection ? selection : undefined,
       })
       onChanged()
       onCreated(created.id)
@@ -143,8 +169,25 @@ export function VoiceCloneModal({
     }
   }
 
+  /** 试听已保存音色的参考音频：克隆质量完全由它决定，听一遍比看波形更有用。 */
+  function togglePreview(item: TtsVoice) {
+    const player = probe.current
+    if (!player) return
+    if (playing === item.id) {
+      player.pause()
+      setPlaying('')
+      return
+    }
+    player.src = item.audio_url ?? ''
+    setPlaying(item.id)
+    void player.play().catch(() => {
+      setPlaying('')
+      setError('这段参考音频暂时放不了，可以重新打开弹窗再试')
+    })
+  }
+
   return (
-    <Modal ariaLabel='音色克隆' onClose={onClose} size='md'>
+    <Modal ariaLabel='音色克隆' onClose={onClose} size='md' dormant={Boolean(editing)}>
       <ModalHeader title='音色克隆' icon={Mic} onClose={onClose} />
       <div className='modal-body tts-clone'>
         <p className='tts-upload-lead'>
@@ -156,22 +199,66 @@ export function VoiceCloneModal({
           ))}
         </ul>
 
-        <label className='tts-field'>
+        <div className='tts-field'>
           <span>参考音频</span>
-          <input
-            type='file'
-            accept='audio/*'
-            data-autofocus
-            onChange={(event) => pick(event.target.files?.[0] ?? null)}
-          />
-          <small>支持 wav / mp3 / m4a，超过 20 秒只取开头一段。</small>
-        </label>
+          <label
+            className={`tts-drop${file ? ' filled' : ''}${dragOver ? ' over' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault()
+              setDragOver(true)
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(event) => {
+              event.preventDefault()
+              setDragOver(false)
+              pick(event.dataTransfer.files?.[0] ?? null)
+            }}
+          >
+            {/*
+              * input 不是 hidden 而是透明盖在整块上：这样点击任意位置都能选文件，
+              * 键盘 Tab 也能聚焦到它（focus-within 就是它的焦点样式）。
+              */}
+            <input
+              type='file'
+              accept='audio/*'
+              data-autofocus
+              onChange={(event) => pick(event.target.files?.[0] ?? null)}
+            />
+            {file ? (
+              <>
+                <span className='tts-drop-icon'>
+                  <CheckCircle2 size={18} />
+                </span>
+                <span className='tts-drop-text'>
+                  <strong title={file.name}>{file.name}</strong>
+                  <small>{formatBytes(file.size)} · 已选中波形里的一段作为参考</small>
+                </span>
+                <span className='tts-drop-act'>换一个</span>
+              </>
+            ) : (
+              <>
+                <span className='tts-drop-icon'>
+                  <Upload size={18} />
+                </span>
+                <span className='tts-drop-text'>
+                  <strong>把参考音频拖到这里，或点击选择文件</strong>
+                  <small>支持 wav / mp3 / m4a · 3~10 秒最合适，超过 20 秒只取开头一段</small>
+                </span>
+              </>
+            )}
+          </label>
+        </div>
 
         {preview && (
           <div className='tts-preview'>
             <audio className='tts-player' controls preload='metadata' src={preview} />
             <small>{file?.name}</small>
           </div>
+        )}
+
+        {/* 选中的片段才是最终保存与被克隆的那一段，所以放在正文里而不是折叠起来 */}
+        {preview && (
+          <ReferenceAudioEditor src={preview} value={selection} onChange={setSelection} busy={busy} />
         )}
 
         <label className='tts-field'>
@@ -208,28 +295,64 @@ export function VoiceCloneModal({
 
         {mine.length > 0 && (
           <div className='tts-mine'>
-            <p className='tts-mine-lead'>我的音色（{mine.length}）</p>
+            <p className='tts-mine-lead'>
+              我的音色（{mine.length}）· 点「编辑」可以裁剪参考音频、换音频或改文本
+            </p>
             <ul>
               {mine.map((item) => (
                 <li key={item.id}>
-                  <span title={item.reference_text}>{item.name}</span>
-                  <button
-                    className='icon-button danger'
-                    type='button'
-                    disabled={removing === item.id}
-                    aria-label={`删除音色 ${item.name}`}
-                    title='删除这个音色'
-                    onClick={() => void removeVoice(item)}
-                  >
-                    {removing === item.id ? (
-                      <LoaderCircle className='spin' size={14} />
-                    ) : (
-                      <Trash2 size={14} />
-                    )}
-                  </button>
+                  <span className='tts-mine-name' title={item.reference_text}>
+                    {item.name}
+                    {item.seconds > 0 && <small>{item.seconds.toFixed(1)}s</small>}
+                  </span>
+                  <span className='tts-mine-actions'>
+                    <button
+                      className='icon-button'
+                      type='button'
+                      aria-label={`试听音色 ${item.name} 的参考音频`}
+                      title='试听参考音频'
+                      onClick={() => togglePreview(item)}
+                    >
+                      {playing === item.id ? <LoaderCircle className='spin' size={14} /> : <Play size={14} />}
+                    </button>
+                    <button
+                      className='icon-button'
+                      type='button'
+                      aria-label={`编辑音色 ${item.name}`}
+                      title='编辑参考音频与文本'
+                      onClick={() => {
+                        setError('')
+                        setNotice('')
+                        setEditing(item)
+                      }}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      className='icon-button danger'
+                      type='button'
+                      disabled={removing === item.id}
+                      aria-label={`删除音色 ${item.name}`}
+                      title='删除这个音色'
+                      onClick={() => void removeVoice(item)}
+                    >
+                      {removing === item.id ? (
+                        <LoaderCircle className='spin' size={14} />
+                      ) : (
+                        <Trash2 size={14} />
+                      )}
+                    </button>
+                  </span>
                 </li>
               ))}
             </ul>
+            <audio
+              ref={probe}
+              preload='none'
+              hidden
+              onEnded={() => setPlaying('')}
+              onPause={() => setPlaying('')}
+            />
           </div>
         )}
 
@@ -263,6 +386,20 @@ export function VoiceCloneModal({
           取消
         </button>
       </div>
+
+      {/* 编辑弹窗叠在这一层之上：新建表单原样留着，关掉它就能接着填 */}
+      {editing && (
+        <VoiceEditModal
+          voice={editing}
+          onClose={() => setEditing(null)}
+          onChanged={onChanged}
+          onRemoved={(voiceId) => {
+            setNotice(`音色「${editing.name}」已删除`)
+            void voiceId
+          }}
+          onSaved={(_result, message) => setNotice(message)}
+        />
+      )}
     </Modal>
   )
 }

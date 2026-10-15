@@ -3,6 +3,7 @@ import type {
   AiProviderType,
   AiSummaryResult,
   AppSettings,
+  AudioSelection,
   AuthorPage,
   Connector,
   CredentialStatus,
@@ -24,6 +25,7 @@ import type {
   TtsJob,
   TtsTranscribeResult,
   TtsVoice,
+  TtsVoiceEditResult,
 } from '../types'
 
 /** 拼查询串；空值跳过，数组展开成重复参数（后端的 ids 用重复参数收）。 */
@@ -184,20 +186,92 @@ export const api = {
   /** 语音合成页的配置：可选模型与音色、当前选择、估算依据。 */
   ttsConfig: () => request<TtsConfig>('/api/tts'),
   ttsVoices: () => request<TtsVoice[]>('/api/tts/voices'),
-  /** 转写一段参考音频：用来自动填「音色克隆」里必须逐字一致的参考文本。 */
-  transcribeTtsVoice: (audio: File) => {
+  /**
+   * 转写一段参考音频：用来自动填「音色克隆」里必须逐字一致的参考文本。
+   * 带选区时只转写选中那一段——文字与最终保存的音频保持同一段，裁剪后不必再删字。
+   */
+  transcribeTtsVoice: (audio: File, selection?: AudioSelection) => {
     const form = new FormData()
     form.append('audio', audio)
+    if (selection) {
+      form.append('start', String(selection.start))
+      form.append('end', String(selection.end))
+    }
     return request<TtsTranscribeResult>('/api/tts/voices/transcribe', { method: 'POST', body: form })
   },
-  /** 上传一段参考音频存成自己的音色（multipart：音频文件 + 名称 + 参考文本）。 */
-  createTtsVoice: (payload: { name: string; reference_text: string; audio: File }) => {
+  /** 上传一段参考音频存成自己的音色（multipart：音频文件 + 名称 + 参考文本 + 可选选区）。 */
+  createTtsVoice: (payload: {
+    name: string
+    reference_text: string
+    audio: File
+    selection?: AudioSelection
+  }) => {
     const form = new FormData()
     form.append('name', payload.name)
     form.append('reference_text', payload.reference_text)
     form.append('audio', payload.audio)
+    if (payload.selection) {
+      form.append('start', String(payload.selection.start))
+      form.append('end', String(payload.selection.end))
+    }
     return request<TtsVoice>('/api/tts/voices', { method: 'POST', body: form })
   },
+  /** 自定义音色的参考音频地址：试听与画波形都用它。 */
+  ttsVoiceAudioUrl: (id: string) => `/api/tts/voices/${id}/audio`,
+  /** 就地换掉参考音频（不新建音色）。文本按 手填 → 转写 → 沿用旧值 的顺序定。 */
+  replaceTtsVoiceAudio: (payload: {
+    id: string
+    audio: File
+    name?: string
+    reference_text?: string
+    selection?: AudioSelection
+  }) => {
+    const form = new FormData()
+    form.append('audio', payload.audio)
+    if (payload.name) form.append('name', payload.name)
+    if (payload.reference_text) form.append('reference_text', payload.reference_text)
+    if (payload.selection) {
+      form.append('start', String(payload.selection.start))
+      form.append('end', String(payload.selection.end))
+    }
+    return request<TtsVoiceEditResult>(`/api/tts/voices/${payload.id}/audio`, { method: 'POST', body: form })
+  },
+  /** 把参考音频裁到选区；`retranscribe` 为真时按裁剪后的音频重新转写参考文本。 */
+  trimTtsVoice: (payload: {
+    id: string
+    selection: AudioSelection
+    reference_text?: string
+    retranscribe?: boolean
+  }) =>
+    request<TtsVoiceEditResult>(`/api/tts/voices/${payload.id}/trim`, {
+      method: 'POST',
+      body: JSON.stringify({
+        start: payload.selection.start,
+        end: payload.selection.end,
+        reference_text: payload.reference_text,
+        retranscribe: payload.retranscribe ?? false,
+      }),
+    }),
+  /** 改音色名（只动元数据，不搬音频）。 */
+  renameTtsVoice: (id: string, name: string) =>
+    request<TtsVoiceEditResult>(`/api/tts/voices/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  /** 按当前参考音频重新转写一遍参考文本（会直接写盘）。 */
+  retranscribeTtsVoice: (id: string) =>
+    request<TtsVoiceEditResult>(`/api/tts/voices/${id}/retranscribe`, { method: 'POST' }),
+  /**
+   * 按选区转写已保存的参考音频，**不写盘**：只回填编辑框，点「保存修改」才落盘。
+   * 编辑弹窗用它而不是上面那个写盘接口，否则「看一眼」也会把音色改了。
+   */
+  previewTtsVoiceTranscript: (id: string, selection?: AudioSelection) =>
+    request<TtsTranscribeResult>(`/api/tts/voices/${id}/preview-transcript`, {
+      method: 'POST',
+      body: JSON.stringify(
+        selection ? { start: selection.start, end: selection.end } : { start: null, end: null },
+      ),
+    }),
   deleteTtsVoice: (id: string) =>
     request<{ id: string; removed: boolean }>(`/api/tts/voices/${id}`, { method: 'DELETE' }),
   /** 提交合成任务（长文本要几分钟，返回后轮询 ttsJob）。 */

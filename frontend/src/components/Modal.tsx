@@ -23,6 +23,8 @@ export function Modal({
   role = 'dialog',
   size = 'md',
   closing = false,
+  dormant = false,
+  layer = 'base',
   className = '',
   children,
 }: {
@@ -32,16 +34,26 @@ export function Modal({
   size?: 'sm' | 'md' | 'lg'
   /** 退场动画期间为 true：样式据此播淡出，动画结束后父组件再卸载 */
   closing?: boolean
+  /**
+   * 休眠：被上层弹窗盖住时用它。
+   *
+   * 焦点陷阱会在每次 Tab 时把焦点拽回自己这一层，两个弹窗叠着时就会来回抢——
+   * 上层弹窗里的键盘操作直接落到下层去。Esc 同理：按一次会把两层一起关掉。
+   * 所以这一层把这两件事整体让给上层，滚动锁也交给上层管（否则先关的那层会解锁）。
+   */
+  dormant?: boolean
+  /** 叠在另一个弹窗之上时用 top：遮罩要真的盖住下层，z-index 加在遮罩上才有效。 */
+  layer?: 'base' | 'top'
   className?: string
   children: ReactNode
 }) {
   const dialogRef = useRef<HTMLElement>(null)
-  useModalDismiss(true, onClose)
-  useFocusTrap(true, dialogRef)
+  useModalDismiss(!dormant, onClose)
+  useFocusTrap(!dormant, dialogRef)
 
   return createPortal(
     <div
-      className={closing ? 'modal-overlay closing' : 'modal-overlay'}
+      className={`modal-overlay${layer === 'top' ? ' top' : ''}${dormant ? ' dormant' : ''}${closing ? ' closing' : ''}`}
       onClick={onClose}
       role="presentation"
     >

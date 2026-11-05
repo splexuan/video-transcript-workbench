@@ -18,7 +18,10 @@ export function jobDisplayTitle(job: Job, titles: DocumentTitle[]) {
   if (named) return named
 
   if (job.source_type === 'file') {
-    return job.source_value.replaceAll('\\', '/').split('/').pop() || '本地文件'
+    const name = job.source_value.replaceAll('\\', '/').split('/').pop() || '本地文件'
+    // 收件箱里的文件名是 `<uuid>__原名`：去掉随机前缀，界面只显示用户认识的原名。
+    const separator = name.indexOf('__')
+    return separator >= 0 ? name.slice(separator + 2) : name
   }
 
   try {

@@ -1,9 +1,9 @@
-import { ArrowRight, CircleCheck, Eye, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react'
+import { ArrowRight, CircleCheck, Eye, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert, X } from 'lucide-react'
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { BatchExecution } from '../components/BatchExecution'
-import { DocumentPreviewModal } from '../components/DocumentPreviewModal'
+import { DocumentOverlay, type OverlayMode } from '../components/DocumentOverlay'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { TaskExecution } from '../components/TaskExecution'
 import { Thumb } from '../components/Thumb'
@@ -42,6 +42,17 @@ const MEDIA_SUFFIXES = [
 ]
 const MEDIA_ACCEPT = [...MEDIA_SUFFIXES.map((suffix) => `.${suffix}`), 'audio/*', 'video/*'].join(',')
 const MEDIA_HINT = 'mp4 / mov / mkv / webm / avi / mp3 / m4a / wav / flac / ogg / opus / aac'
+/** 批量本地文件的上限，与后端 /api/job-batches/upload 保持一致。 */
+const MAX_BATCH_FILES = 50
+
+function fileSizeLabel(bytes: number) {
+  return bytes < 1024 ** 2 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : sizeLabel(bytes)
+}
+
+/** 判断两个 File 是不是同一个文件：同名同大小同修改时间视为重复，主要用于拖拽去重。 */
+function fileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`
+}
 
 /** 拖进来的目录（没有后缀）与其它非媒体文件都会被这一步挡掉。 */
 function isSupportedMedia(file: File) {
@@ -64,6 +75,9 @@ export function WorkbenchPage() {
   const [captureMode, setCaptureMode] = useState<'single' | 'batch'>('single')
   const [source, setSource] = useState('')
   const [batchSource, setBatchSource] = useState('')
+  // 批量模式有两种来源：链接（逐行预检）与本地文件（选好后一次上传成一个批次）
+  const [batchSourceKind, setBatchSourceKind] = useState<'links' | 'files'>('links')
+  const [batchFiles, setBatchFiles] = useState<File[]>([])
   const [batchPreflight, setBatchPreflight] = useState<JobBatchPreflight | null>(null)
   const [preflighting, setPreflighting] = useState(false)
   const [preflightError, setPreflightError] = useState('')
@@ -74,8 +88,8 @@ export function WorkbenchPage() {
   const [recentDocuments, setRecentDocuments] = useState<DocumentSummary[]>([])
   // 任务行、批次行要显示的标题：只按当前涉及的 document_id 查
   const [titles, setTitles] = useState<DocumentTitle[]>([])
-  // 最近文案点击 → 文案预览弹窗
-  const [docPreviewId, setDocPreviewId] = useState('')
+  // 最近文案 / 任务结果点击 → 文案弹窗（阅读或编辑）
+  const [docOverlay, setDocOverlay] = useState<{ id: string; mode: OverlayMode } | null>(null)
   // 本次会话刚提交的任务：刷新页面后清空，任务执行面板不会回显历史任务
   const [focusedJobId, setFocusedJobId] = useState('')
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
@@ -214,7 +228,7 @@ export function WorkbenchPage() {
   }, [titleKey])
 
   useEffect(() => {
-    if (captureMode !== 'batch') return
+    if (captureMode !== 'batch' || batchSourceKind !== 'links') return
     const sources = batchLines(batchSource)
     if (sources.length === 0 || sources.length > 50) return
     let active = true
@@ -227,13 +241,22 @@ export function WorkbenchPage() {
         .finally(() => active && setPreflighting(false))
     }, 350)
     return () => { active = false; window.clearTimeout(timer) }
-  }, [batchSource, captureMode])
+  }, [batchSource, batchSourceKind, captureMode])
 
   function selectCaptureMode(next: 'single' | 'batch') {
     setCaptureMode(next)
     setBatchPreflight(null)
     setPreflightError('')
     setPreflighting(false)
+  }
+
+  function selectBatchSourceKind(next: 'links' | 'files') {
+    setBatchSourceKind(next)
+    setBatchPreflight(null)
+    setPreflightError('')
+    setPreflighting(false)
+    setError('')
+    setNotice('')
   }
 
   function changeBatchSource(value: string) {
@@ -306,7 +329,12 @@ export function WorkbenchPage() {
     event.preventDefault()
     const sources = batchLines(batchSource)
     if (captureMode === 'single' && !source.trim()) return
-    if (captureMode === 'batch' && (!batchPreflight?.can_submit || sources.length === 0)) return
+    if (
+      captureMode === 'batch'
+      && batchSourceKind === 'links'
+      && (!batchPreflight?.can_submit || sources.length === 0)
+    ) return
+    if (captureMode === 'batch' && batchSourceKind === 'files' && batchFiles.length === 0) return
     setSubmitting(true)
     setError('')
     setNotice('')
@@ -314,6 +342,16 @@ export function WorkbenchPage() {
     setBatchDetail(null)
     try {
       if (captureMode === 'batch') {
+        if (batchSourceKind === 'files') {
+          const created = await api.uploadJobBatch(batchFiles, submitMode(), modelId || null, preferSubtitle)
+          setJobs((current) => [...created.jobs, ...current].slice(0, 4))
+          setFocusedJobId(created.jobs[0]?.id ?? '')
+          setCreatedBatchId(created.id)
+          setBatchDetail(created)
+          setBatchFiles([])
+          setNotice(`已创建文件批次，共 ${created.total_count} 个文件。`)
+          return
+        }
         const created = await api.createBatch({
           sources,
           mode: submitMode(),
@@ -353,6 +391,34 @@ export function WorkbenchPage() {
     void importFiles(files)
   }
 
+  /** 把文件加进批量待上传列表：过滤格式、按「文件名 + 大小 + 修改时间」去重、封顶 50 个。 */
+  function addBatchFiles(files: File[]) {
+    const accepted = files.filter(isSupportedMedia)
+    const skipped = files.length - accepted.length
+    setError('')
+    setNotice('')
+    if (!accepted.length) {
+      setError(`不支持这些文件的格式（支持 ${MEDIA_HINT}）`)
+      return
+    }
+    const seen = new Set(batchFiles.map(fileKey))
+    const unique = accepted.filter((file) => {
+      const key = fileKey(file)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    const room = Math.max(0, MAX_BATCH_FILES - batchFiles.length)
+    const added = unique.slice(0, room)
+    if (added.length) setBatchFiles((current) => [...current, ...added])
+    if (skipped > 0) setNotice(`跳过 ${skipped} 个不支持的格式。`)
+    else if (unique.length > added.length) setNotice(`单个批次最多 ${MAX_BATCH_FILES} 个文件，多出的已忽略。`)
+  }
+
+  function removeBatchFile(index: number) {
+    setBatchFiles((current) => current.filter((_, position) => position !== index))
+  }
+
   /**
    * 导入本地文件：按钮选文件与拖进来走的是同一条路径。
    *
@@ -361,9 +427,11 @@ export function WorkbenchPage() {
    */
   async function importFiles(files: File[]) {
     if (!files.length) return
-    if (captureMode !== 'single') {
-      setNotice('')
-      setError('批量模式只支持链接：想导入本地文件，请先切到「单条」。')
+    // 批量模式下选择/拖入文件不再立即上传，而是先进入待上传列表：
+    // 用户可以确认文件名与数量后，再一次性提交成一个批次。
+    if (captureMode === 'batch') {
+      selectBatchSourceKind('files')
+      addBatchFiles(files)
       return
     }
     const accepted = files.filter(isSupportedMedia)
@@ -498,51 +566,121 @@ export function WorkbenchPage() {
             </>
           ) : (
             <div className="batch-source-wrap">
-              <label htmlFor="batch-source">每行粘贴一条视频链接或分享文案</label>
-              <textarea
-                id="batch-source"
-                ref={batchInput}
-                value={batchSource}
-                onChange={(event) => changeBatchSource(event.target.value)}
-                placeholder={'https://www.bilibili.com/video/...\nhttps://v.douyin.com/...\n每行一条，最多 50 条'}
-                rows={7}
-              />
-              <div className="batch-submit-row">
-                <span>{batchLines(batchSource).length}/50 条</span>
+              <div className="batch-source-kind" role="radiogroup" aria-label="批量来源">
                 <button
-                  className="primary-button"
-                  type="submit"
-                  disabled={submitting || preflighting || !batchPreflight?.can_submit}
+                  type="button"
+                  role="radio"
+                  aria-checked={batchSourceKind === 'links'}
+                  className={batchSourceKind === 'links' ? 'active' : ''}
+                  onClick={() => selectBatchSourceKind('links')}
                 >
-                  {submitting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}
-                  {submitting ? '正在创建批次' : `开始批量提取${batchPreflight?.can_submit ? `（${batchPreflight.valid_count}）` : ''}`}
+                  <Link2 size={15} /> 链接
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={batchSourceKind === 'files'}
+                  className={batchSourceKind === 'files' ? 'active' : ''}
+                  onClick={() => selectBatchSourceKind('files')}
+                >
+                  <FileUp size={15} /> 本地文件
                 </button>
               </div>
-              {preflighting && <p className="batch-preflight pending"><LoaderCircle className="spin" size={15} /> 正在检查链接…</p>}
-              {!preflighting && batchPreflight?.can_submit && (
-                <p className="batch-preflight valid"><CircleCheck size={15} /> {batchPreflight.valid_count} 条链接均可提交</p>
-              )}
-              {!preflighting && batchPreflight && !batchPreflight.can_submit && (
-                <div className="batch-preflight issues" role="alert">
-                  <p><TriangleAlert size={15} /> 先修正这几条，点一行可跳到对应输入行</p>
-                  {/* 之前只把「第 N 行」当文字列出来，用户得自己回去数行号；
-                      现在每条都能点，点完光标就落在那一行上 */}
-                  <ul className="batch-issue-list">
-                    {batchPreflight.items.filter((item) => item.status !== 'valid').map((item) => (
-                      <li key={`${item.position}-${item.status}`}>
-                        <button type="button" onClick={() => focusBatchLine(item.position)}>
-                          <span className="batch-issue-line">第 {item.position} 行</span>
-                          <span>{item.message}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+
+              {batchSourceKind === 'links' ? (
+                <>
+                  <label htmlFor="batch-source">每行粘贴一条视频链接或分享文案</label>
+                  <textarea
+                    id="batch-source"
+                    ref={batchInput}
+                    value={batchSource}
+                    onChange={(event) => changeBatchSource(event.target.value)}
+                    placeholder={'https://www.bilibili.com/video/...\nhttps://v.douyin.com/...\n每行一条，最多 50 条'}
+                    rows={7}
+                  />
+                  <div className="batch-submit-row">
+                    <span>{batchLines(batchSource).length}/50 条</span>
+                    <button
+                      className="primary-button"
+                      type="submit"
+                      disabled={submitting || preflighting || !batchPreflight?.can_submit}
+                    >
+                      {submitting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}
+                      {submitting ? '正在创建批次' : `开始批量提取${batchPreflight?.can_submit ? `（${batchPreflight.valid_count}）` : ''}`}
+                    </button>
+                  </div>
+                  {preflighting && <p className="batch-preflight pending"><LoaderCircle className="spin" size={15} /> 正在检查链接…</p>}
+                  {!preflighting && batchPreflight?.can_submit && (
+                    <p className="batch-preflight valid"><CircleCheck size={15} /> {batchPreflight.valid_count} 条链接均可提交</p>
+                  )}
+                  {!preflighting && batchPreflight && !batchPreflight.can_submit && (
+                    <div className="batch-preflight issues" role="alert">
+                      <p><TriangleAlert size={15} /> 先修正这几条，点一行可跳到对应输入行</p>
+                      {/* 之前只把「第 N 行」当文字列出来，用户得自己回去数行号；
+                          现在每条都能点，点完光标就落在那一行上 */}
+                      <ul className="batch-issue-list">
+                        {batchPreflight.items.filter((item) => item.status !== 'valid').map((item) => (
+                          <li key={`${item.position}-${item.status}`}>
+                            <button type="button" onClick={() => focusBatchLine(item.position)}>
+                              <span className="batch-issue-line">第 {item.position} 行</span>
+                              <span>{item.message}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {batchLines(batchSource).length > 50 && (
+                    <p className="batch-preflight issues" role="alert"><TriangleAlert size={15} /> 单个批次最多 50 条，请拆成多个批次提交。</p>
+                  )}
+                  {preflightError && <p className="batch-preflight issues" role="alert"><TriangleAlert size={15} /> {preflightError}</p>}
+                </>
+              ) : (
+                <div className="batch-files">
+                  <div className="batch-file-drop">
+                    <FileUp size={22} />
+                    <strong>选择或拖入本地音视频</strong>
+                    <small>支持 {MEDIA_HINT}，一次最多 {MAX_BATCH_FILES} 个</small>
+                    <button
+                      className="file-button"
+                      type="button"
+                      onClick={() => fileInput.current?.click()}
+                      disabled={submitting || uploading}
+                    >
+                      <FileUp size={16} /> 选择文件
+                    </button>
+                  </div>
+                  {batchFiles.length > 0 && (
+                    <ul className="batch-file-list">
+                      {batchFiles.map((file, index) => (
+                        <li key={`${fileKey(file)}:${index}`}>
+                          <span className="batch-file-name" title={file.name}>{file.name}</span>
+                          <span className="batch-file-size">{fileSizeLabel(file.size)}</span>
+                          <button
+                            type="button"
+                            aria-label={`移除 ${file.name}`}
+                            onClick={() => removeBatchFile(index)}
+                            disabled={submitting}
+                          >
+                            <X size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="batch-submit-row">
+                    <span>{batchFiles.length}/{MAX_BATCH_FILES} 个文件</span>
+                    <button
+                      className="primary-button"
+                      type="submit"
+                      disabled={submitting || batchFiles.length === 0}
+                    >
+                      {submitting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}
+                      {submitting ? '正在创建批次' : `开始批量导入${batchFiles.length ? `（${batchFiles.length}）` : ''}`}
+                    </button>
+                  </div>
                 </div>
               )}
-              {batchLines(batchSource).length > 50 && (
-                <p className="batch-preflight issues" role="alert"><TriangleAlert size={15} /> 单个批次最多 50 条，请拆成多个批次提交。</p>
-              )}
-              {preflightError && <p className="batch-preflight issues" role="alert"><TriangleAlert size={15} /> {preflightError}</p>}
             </div>
           )}
 
@@ -592,18 +730,20 @@ export function WorkbenchPage() {
                 multiple
                 onChange={upload}
               />
-              {captureMode === 'single' ? (
-                <button
-                  className="file-button"
-                  type="button"
-                  onClick={() => fileInput.current?.click()}
-                  disabled={uploading}
-                  title="选文件，或把音视频文件直接拖进这一页"
-                >
-                  {uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />}
-                  {uploading ? (uploadLabel || '正在导入') : '导入本地文件'}
-                </button>
-              ) : <span className="batch-file-note">首版批量模式仅支持链接</span>}
+              <button
+                className="file-button"
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                disabled={uploading || submitting}
+                title={captureMode === 'batch'
+                  ? '把文件加入上方的批量待上传列表'
+                  : '选文件，或把音视频文件直接拖进这一页'}
+              >
+                {uploading ? <LoaderCircle className="spin" size={16} /> : <FileUp size={16} />}
+                {uploading
+                  ? (uploadLabel || '正在导入')
+                  : captureMode === 'batch' ? '添加本地文件' : '导入本地文件'}
+              </button>
             </div>
             <div className="subtitle-toggle">
               {/* 只有这一行是控件区，下面的说明是纯文本，读说明时不会误触 */}
@@ -667,13 +807,13 @@ export function WorkbenchPage() {
               <BatchExecution
                 batch={batchDetail}
                 titles={titles}
-                onOpenDocument={setDocPreviewId}
+                onOpenDocument={(id) => setDocOverlay({ id, mode: 'read' })}
               />
             ) : current ? (
               <TaskExecution
                 job={current}
                 title={jobDisplayTitle(current, titles)}
-                onOpenDocument={setDocPreviewId}
+                onOpenDocument={(id) => setDocOverlay({ id, mode: 'read' })}
                 onRetry={retryJob}
               />
             ) : (
@@ -705,6 +845,12 @@ export function WorkbenchPage() {
                           className="document-title"
                           to={`/documents/${document.id}`}
                           state={{ from: '/', label: '工作台' }}
+                          onClick={(event) => {
+                            // 左键在弹窗里改；Ctrl / Cmd / Shift+点击仍可开整页
+                            if (event.metaKey || event.ctrlKey || event.shiftKey) return
+                            event.preventDefault()
+                            setDocOverlay({ id: document.id, mode: 'edit' })
+                          }}
                         >
                           {document.title}
                         </Link>
@@ -713,7 +859,7 @@ export function WorkbenchPage() {
                     </span>
                     <PlatformBadge platform={document.platform} />
                     <span className="document-actions">
-                      <button type="button" onClick={() => setDocPreviewId(document.id)}>
+                      <button type="button" onClick={() => setDocOverlay({ id: document.id, mode: 'read' })}>
                         <Eye size={14} /> 预览
                       </button>
                     </span>
@@ -731,14 +877,20 @@ export function WorkbenchPage() {
             <FileUp size={26} />
             <strong>松开即可导入本地音视频</strong>
             <small>支持 {MEDIA_HINT}</small>
-            {captureMode !== 'single' && (
-              <small className="dropzone-warn">当前是批量模式，本地文件只能在「单条」模式下导入</small>
+            {captureMode === 'batch' && (
+              <small className="dropzone-warn">批量模式下会加入待上传列表，确认后再提交</small>
             )}
           </div>
         </div>
       )}
-      {docPreviewId && (
-        <DocumentPreviewModal key={docPreviewId} documentId={docPreviewId} backTo="/" backLabel="工作台" onClose={() => setDocPreviewId('')} />
+      {docOverlay && (
+        <DocumentOverlay
+          key={docOverlay.id}
+          documentId={docOverlay.id}
+          initialMode={docOverlay.mode}
+          // 右栏每 1.6 秒轮询一次，关掉弹窗后自然会刷新，不用额外触发
+          onClose={() => setDocOverlay(null)}
+        />
       )}
     </div>
   )

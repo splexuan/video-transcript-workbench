@@ -100,6 +100,54 @@ def test_upload_local_file() -> None:
     assert response.json()["source_value"].endswith("__recording.wav")
 
 
+def test_upload_multiple_local_files_as_one_batch() -> None:
+    """多选本地文件提交后是一个批次，而不是几条互不相干的任务。"""
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/job-batches/upload",
+            data={"mode": "auto", "prefer_subtitle": "false"},
+            files=[
+                ("files", ("first.wav", b"RIFF-one", "audio/wav")),
+                ("files", ("second.mp3", b"ID3-two", "audio/mpeg")),
+            ],
+        )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["kind"] == "file"
+    assert body["total_count"] == 2
+    assert body["title"].startswith("first")
+    assert [job["batch_position"] for job in body["jobs"]] == [1, 2]
+    assert all(job["source_type"] == "file" for job in body["jobs"])
+    assert all("__" in job["source_value"] for job in body["jobs"])
+
+
+def test_upload_batch_rejects_an_unsupported_file_without_leaving_files() -> None:
+    """一个文件格式不对就整批失败，已经落盘的前一个文件也要清掉。"""
+
+    settings.inbox_dir.mkdir(parents=True, exist_ok=True)
+    before = {path.name for path in settings.inbox_dir.iterdir()}
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/job-batches/upload",
+            files=[
+                ("files", ("good.wav", b"RIFF", "audio/wav")),
+                ("files", ("notes.txt", b"hello", "text/plain")),
+            ],
+        )
+    assert response.status_code == 400
+    assert "notes.txt" in response.json()["detail"]
+    assert {path.name for path in settings.inbox_dir.iterdir()} == before
+
+
+def test_upload_batch_caps_the_number_of_files() -> None:
+    files = [("files", (f"clip-{index}.wav", b"RIFF", "audio/wav")) for index in range(51)]
+    with TestClient(app) as client:
+        response = client.post("/api/job-batches/upload", files=files)
+    assert response.status_code == 400
+    assert "最多 50 个文件" in response.json()["detail"]
+
+
 def test_file_path_cannot_be_submitted_through_json() -> None:
     with TestClient(app) as client:
         response = client.post(

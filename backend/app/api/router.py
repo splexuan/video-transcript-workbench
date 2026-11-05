@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.application.ai_assist import provider_catalog, run_task
 from app.application.exporters import export_document
 from app.application.pagination import MAX_PAGE_SIZE, InvalidCursor
 from app.application.services import (
@@ -31,6 +30,7 @@ from app.application.services import (
     apply_body_text,
     auto_format_segments,
     cancel_job_batch,
+    create_file_job_batch,
     create_job,
     create_job_batch,
     delete_document,
@@ -58,7 +58,6 @@ from app.application.services import (
 )
 from app.config import settings
 from app.domain import EngineUnavailableError, ModelNotFoundError
-from app.infrastructure.ai_engines import AiEngineError
 from app.infrastructure.cover_store import cover_path
 from app.infrastructure.credential_store import all_status
 from app.infrastructure.database import get_session
@@ -66,8 +65,6 @@ from app.infrastructure.media import tools_ready
 from app.infrastructure.model_catalog import RECOGNITION_ENGINES, require_spec
 from app.infrastructure.models import Document, Job, JobBatch
 from app.schemas import (
-    AiSummarizeRequest,
-    AiSummaryRead,
     AuthorPage,
     BodyWrite,
     DocumentDetail,
@@ -124,6 +121,34 @@ ALLOWED_MEDIA_SUFFIXES = {
     ".webm",
     ".avi",
 }
+# 批量上传一次最多收多少个文件：与批量链接的上限保持一致。
+MAX_BATCH_FILES = 50
+
+
+def _safe_media_name(original_name: str, suffix: str) -> str:
+    """去掉路径分隔符与非法字符，只留最后一段文件名；没有名字时按 media.<后缀> 兜底。"""
+
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", Path(original_name).name).strip()
+    return safe_name[-180:] or f"media{suffix}"
+
+
+def _media_destination(original_name: str, suffix: str) -> Path:
+    return settings.inbox_dir / f"{uuid4()}__{_safe_media_name(original_name, suffix)}"
+
+
+async def _store_upload(file: UploadFile, destination: Path) -> None:
+    """把上传文件写进收件箱；为空或超过单文件上限时抛错。"""
+
+    total = 0
+    limit = settings.upload_max_mb * 1024 * 1024
+    with destination.open("wb") as output:
+        while chunk := await file.read(1024 * 1024):
+            total += len(chunk)
+            if total > limit:
+                raise HTTPException(status_code=413, detail=f"文件不能超过 {settings.upload_max_mb} MB")
+            output.write(chunk)
+    if total == 0:
+        raise HTTPException(status_code=400, detail="文件为空")
 
 
 @router.get("/health")
@@ -250,20 +275,9 @@ async def upload_job(
         raise HTTPException(status_code=400, detail="不支持此提取模式")
 
     settings.inbox_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", Path(original_name).name).strip()
-    safe_name = safe_name[-180:] or f"media{suffix}"
-    destination = settings.inbox_dir / f"{uuid4()}__{safe_name}"
-    total = 0
-    limit = settings.upload_max_mb * 1024 * 1024
+    destination = _media_destination(original_name, suffix)
     try:
-        with destination.open("wb") as output:
-            while chunk := await file.read(1024 * 1024):
-                total += len(chunk)
-                if total > limit:
-                    raise HTTPException(status_code=413, detail=f"文件不能超过 {settings.upload_max_mb} MB")
-                output.write(chunk)
-        if total == 0:
-            raise HTTPException(status_code=400, detail="文件为空")
+        await _store_upload(file, destination)
         return create_job(
             session,
             JobCreate(
@@ -279,6 +293,71 @@ async def upload_job(
         raise
     finally:
         await file.close()
+
+
+@router.post(
+    "/job-batches/upload",
+    response_model=JobBatchDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_job_batch(
+    session: SessionDep,
+    files: Annotated[list[UploadFile], File()],
+    mode: Annotated[str, Form()] = "auto",
+    model_id: Annotated[str | None, Form()] = None,
+    prefer_subtitle: Annotated[bool, Form()] = True,
+) -> JobBatchDetailRead:
+    """把多个本地音视频作为一个批次导入：文件先落收件箱，再一次性建批次。
+
+    与单文件上传的区别只在编排：批次里每条任务仍然走同一套 worker、进度与
+    清理逻辑；任何一步失败都会把本次已经落盘的文件删掉，不留半批任务。
+    """
+
+    if not files:
+        raise HTTPException(status_code=400, detail="请选择至少一个文件")
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(status_code=400, detail=f"单个批次最多 {MAX_BATCH_FILES} 个文件")
+    if mode not in {"auto", "fast", "accurate"}:
+        raise HTTPException(status_code=400, detail="不支持此提取模式")
+    model_id = validated_model_id(model_id)
+
+    settings.inbox_dir.mkdir(parents=True, exist_ok=True)
+    destinations: list[Path] = []
+    names: list[str] = []
+    try:
+        for upload in files:
+            original_name = upload.filename or "media"
+            suffix = Path(original_name).suffix.lower()
+            if suffix not in ALLOWED_MEDIA_SUFFIXES:
+                raise HTTPException(status_code=400, detail=f"不支持此文件格式：{original_name}")
+            destination = _media_destination(original_name, suffix)
+            # 先登记再写：写到一半超限/报错时，清理逻辑也能删掉这个半成品
+            destinations.append(destination)
+            await _store_upload(upload, destination)
+            names.append(Path(_safe_media_name(original_name, suffix)).stem or original_name)
+    except Exception:
+        for path in destinations:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        for upload in files:
+            await upload.close()
+
+    title = f"{names[0]} 等 {len(names)} 个文件" if len(names) > 1 else names[0]
+    try:
+        batch = create_file_job_batch(
+            session,
+            paths=[str(path) for path in destinations],
+            title=title,
+            mode=mode,
+            model_id=model_id,
+            prefer_subtitle=prefer_subtitle,
+        )
+    except Exception:
+        for path in destinations:
+            path.unlink(missing_ok=True)
+        raise
+    return serialize_job_batch(batch, include_jobs=True)
 
 
 @router.get("/jobs", response_model=Page[JobRead])
@@ -747,34 +826,3 @@ def patch_settings(
     session: SessionDep,
 ) -> dict[str, str | bool | int | None]:
     return update_settings(session, payload)
-
-
-@router.get("/ai/providers")
-def ai_providers(session: SessionDep) -> dict:
-    """可用的 AI 驱动（含不可用的原因）+ 各自的模型清单 + 上次的选择。
-
-    本机的 WorkBuddy / Codex 只读本机登录态，不联网校验；调用失败会在总结接口上报错。
-    """
-
-    return provider_catalog(session)
-
-
-@router.post("/ai/summarize", response_model=AiSummaryRead)
-def ai_summarize(payload: AiSummarizeRequest, session: SessionDep) -> AiSummaryRead:
-    """用所选的本机驱动（WorkBuddy / Codex）做一次 AI 总结。
-
-    DeepSeek 是浏览器驱动，不经过这里：前端按 /api/ai/providers 的选择直接跳网页。
-    """
-
-    try:
-        result = run_task(
-            session,
-            "summary",
-            title=payload.title,
-            text=payload.text,
-            provider=payload.provider or "",
-            model=payload.model or "",
-        )
-    except AiEngineError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return AiSummaryRead(**result)

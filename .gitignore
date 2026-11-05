@@ -52,7 +52,6 @@ task_plan.md
 # 内部文档：对外说明集中在 README
 docs/
 
-.workbuddy/
 .tmp/
 
 # 发行包输出目录：build.bat / build_release.py 生成的 zip 落在这里

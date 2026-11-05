@@ -1,8 +1,8 @@
 import { ArrowDown, Download, FileText, Pencil, Search, Trash2, Users, X } from 'lucide-react'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 
-import { DocumentPreviewModal } from '../components/DocumentPreviewModal'
+import { DocumentOverlay, type OverlayMode } from '../components/DocumentOverlay'
 import { EmptyState } from '../components/EmptyState'
 import { LoadingState } from '../components/LoadingState'
 import { LoadMore } from '../components/LoadMore'
@@ -40,7 +40,6 @@ export function LibraryPage() {
   // 筛选条件放在地址上：刷新、返回、把链接发给别人，都能回到同一个列表视图
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
-  const navigate = useNavigate()
   const query = searchParams.get('q') ?? ''
   const platformFilter = searchParams.get('platform') ?? 'all'
   // 排序与作者筛选同样交给服务端：按字数排全库和排当前页是两回事
@@ -62,9 +61,14 @@ export function LibraryPage() {
   const requestKey = JSON.stringify([query, platformFilter, uploader, sort])
   const [loadedKey, setLoadedKey] = useState('')
   const loading = loadedKey !== requestKey
+  // 上一次真正换了筛选条件的请求：只有筛选变了才清空勾选；
+  // 编辑完回来刷新同一份列表时，勾选应当保留
+  const selectionKeyRef = useRef('')
   const [loadingMore, setLoadingMore] = useState(false)
-  // 点行先弹窗预览，要改内容再进编辑页
-  const [previewId, setPreviewId] = useState('')
+  // 点行先弹窗预览，要改内容就在同一个弹窗里切到编辑；列表始终留在弹窗后面
+  const [overlay, setOverlay] = useState<{ id: string; mode: OverlayMode } | null>(null)
+  // 编辑过之后刷新当前列表，让标题/字数跟上（浏览态关闭不刷新，避免白丢勾选）
+  const [reloadToken, setReloadToken] = useState(0)
   // 正在删除的文案：按钮禁用，避免重复点击
   const [removingId, setRemovingId] = useState('')
   // 勾选导出：勾了才按勾选取；一篇都没勾时还是「导出当前筛选的全部」
@@ -97,11 +101,11 @@ export function LibraryPage() {
   }
 
   /**
-   * 「编辑」入口：直接进编辑页。点整行仍然是「预览」——那是看内容最短的一条路，
-   * 但改一个字不该先开预览再点「打开编辑」。
+   * 「编辑」入口：在同一个弹窗里直接开编辑态。点整行仍然是「预览」——那是看内容最短的一条路，
+   * 但改一个字不该先开预览再点「编辑正文」。
    */
   function openEditor(id: string) {
-    navigate(`/documents/${id}`, { state: { from: listHref, label: '文案库' } })
+    setOverlay({ id, mode: 'edit' })
   }
 
   // 地址上的 q 被外部改动时（例如点侧栏「文案库」清掉筛选），输入框要跟着回到新值
@@ -147,7 +151,10 @@ export function LibraryPage() {
         setError('')
         // 勾选只属于「当前这个列表视图」：换了筛选或排序就清掉，
         // 否则会导出那几篇「已经看不见、但还记在勾选里」的文案
-        setSelected(new Set())
+        if (selectionKeyRef.current !== requestKey) {
+          selectionKeyRef.current = requestKey
+          setSelected(new Set())
+        }
       })
       .catch((reason: Error) => {
         if (active) setError(reason.message || '读取文案失败')
@@ -158,9 +165,10 @@ export function LibraryPage() {
     return () => {
       active = false
     }
-    // filterParams 每次渲染都是新对象，所以按 requestKey 触发——两者由同一组筛选条件算出
+    // filterParams 每次渲染都是新对象，所以按 requestKey 触发——两者由同一组筛选条件算出；
+    // reloadToken 用于「编辑完关掉弹窗」后原地刷新同一份列表
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestKey])
+  }, [requestKey, reloadToken])
 
   useEffect(() => {
     if (!authorPanel) return
@@ -391,7 +399,7 @@ export function LibraryPage() {
                 state={{ from: listHref, label: '文案库' }}
                 key={document.id}
                 role="row"
-                onClick={(event) => { event.preventDefault(); setPreviewId(document.id) }}
+                onClick={(event) => { event.preventDefault(); setOverlay({ id: document.id, mode: 'read' }) }}
               >
                 {/* 整行是链接，勾选框要把点击拦住，否则点勾选会顺带打开预览 */}
                 <span className="pick-cell" role="cell">
@@ -508,8 +516,16 @@ export function LibraryPage() {
           </div>
         </Modal>
       )}
-      {previewId && (
-        <DocumentPreviewModal key={previewId} documentId={previewId} backTo={listHref} backLabel="文案库" onClose={() => setPreviewId('')} />
+      {overlay && (
+        <DocumentOverlay
+          key={overlay.id}
+          documentId={overlay.id}
+          initialMode={overlay.mode}
+          onClose={(edited) => {
+            setOverlay(null)
+            if (edited) setReloadToken((token) => token + 1)
+          }}
+        />
       )}
     </div>
   )

@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, delete, inspect, update
 
@@ -71,6 +72,23 @@ def make_batch(session, status: str, marker: str) -> str:
         raise AssertionError(f"用例没准备「{status}」的子任务摆法")
     session.commit()
     return batch.id
+
+
+def test_file_batch_failed_jobs_cannot_be_retried() -> None:
+    """本地文件批次结束后源文件已从收件箱清理，重试只会拿到失效路径。"""
+
+    with SessionLocal() as session:
+        batch = services.create_file_job_batch(
+            session,
+            paths=["C:/inbox/already-cleaned.wav"],
+            mode="fast",
+        )
+        for job in batch.jobs:
+            job.status = "failed"
+        session.commit()
+
+        with pytest.raises(services.JobBatchControlError, match="重新导入"):
+            services.retry_failed_job_batch(session, batch)
 
 
 def test_batch_preflight_marks_duplicate_and_unsupported_lines() -> None:

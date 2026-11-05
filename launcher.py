@@ -22,7 +22,6 @@ APP_URL = "http://127.0.0.1:8765"
 #
 # 这里刻意只提示、不拦截：这些功能都是可选的，为它们挡住整个应用不合理。
 OPTIONAL_DEPENDENCIES = (
-    ("cryptography", "ai", "WorkBuddy 本机登录（登录态是加密的，需要它解密）"),
     ("faster_whisper", "accurate", "「精准时间轴」识别模式"),
 )
 

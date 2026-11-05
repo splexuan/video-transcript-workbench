@@ -2,7 +2,7 @@ import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, ListTodo
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
-import { DocumentPreviewModal } from '../components/DocumentPreviewModal'
+import { DocumentOverlay, type OverlayMode } from '../components/DocumentOverlay'
 import { DropdownMenu } from '../components/DropdownMenu'
 import { EmptyState } from '../components/EmptyState'
 import { LoadingState } from '../components/LoadingState'
@@ -84,8 +84,8 @@ export function JobsPage() {
   const [error, setError] = useState('')
   // 正在「加载更多」的列表（空串表示没有）
   const [loadingMore, setLoadingMore] = useState('')
-  // 「打开文案」先弹窗预览，要改再进编辑页
-  const [previewId, setPreviewId] = useState('')
+  // 「打开文案」先弹窗预览，要改就在同一个弹窗里切到编辑
+  const [overlay, setOverlay] = useState<{ id: string; mode: OverlayMode } | null>(null)
   // 正在执行取消/删除/重试的任务：按钮禁用，避免重复点击
   const [busyId, setBusyId] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -421,14 +421,14 @@ export function JobsPage() {
                           role={documentId ? 'button' : undefined}
                           tabIndex={documentId ? 0 : undefined}
                           aria-label={documentId ? `打开文案《${title}》` : undefined}
-                          onClick={documentId ? () => setPreviewId(documentId) : undefined}
+                          onClick={documentId ? () => setOverlay({ id: documentId, mode: 'read' }) : undefined}
                           onKeyDown={
                             documentId
                               ? (event: ReactKeyboardEvent<HTMLDivElement>) => {
                                   // 空格在容器上默认是滚动页面，得自己拦下来
                                   if (event.key !== 'Enter' && event.key !== ' ') return
                                   event.preventDefault()
-                                  setPreviewId(documentId)
+                                  setOverlay({ id: documentId, mode: 'read' })
                                 }
                               : undefined
                           }
@@ -488,14 +488,14 @@ export function JobsPage() {
               role={documentId ? 'button' : undefined}
               tabIndex={documentId ? 0 : undefined}
               aria-label={documentId ? `打开文案《${title}》` : undefined}
-              onClick={documentId ? () => setPreviewId(documentId) : undefined}
+              onClick={documentId ? () => setOverlay({ id: documentId, mode: 'read' }) : undefined}
               onKeyDown={
                 documentId
                   ? (event: ReactKeyboardEvent<HTMLElement>) => {
                       // 空格在容器上默认是滚动页面，得自己拦下来
                       if (event.key !== 'Enter' && event.key !== ' ') return
                       event.preventDefault()
-                      setPreviewId(documentId)
+                      setOverlay({ id: documentId, mode: 'read' })
                     }
                   : undefined
               }
@@ -535,17 +535,19 @@ export function JobsPage() {
                 </div>
                 <div className="job-card-actions">
                   {/* 卡片整行可点，行内按钮要把点击拦下来，别顺手把文案也打开了 */}
-                  {/* 已完成的卡片给一条直达编辑页的路：整行点击只到预览，
-                      要改内容不必再进预览弹窗点一次「打开编辑」 */}
+                  {/* 已完成的卡片给一条直达编辑的路：整行点击只到预览，
+                      要改内容不必再进预览点一次「编辑正文」 */}
                   {documentId && (
-                    <Link
+                    <button
                       className="text-button"
-                      to={`/documents/${documentId}`}
-                      state={{ from: '/jobs', label: '任务队列' }}
-                      onClick={(event) => event.stopPropagation()}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setOverlay({ id: documentId, mode: 'edit' })
+                      }}
                     >
                       <Pencil size={15} /> 编辑文案
-                    </Link>
+                    </button>
                   )}
                   {retryable && (
                     <button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); void retry(job.id) }} disabled={busyId === job.id}><RotateCcw size={15} /> 重新提取</button>
@@ -563,8 +565,14 @@ export function JobsPage() {
           )}
         </>}
       </section>
-      {previewId && (
-        <DocumentPreviewModal key={previewId} documentId={previewId} backTo="/jobs" backLabel="任务队列" onClose={() => setPreviewId('')} />
+      {overlay && (
+        <DocumentOverlay
+          key={overlay.id}
+          documentId={overlay.id}
+          initialMode={overlay.mode}
+          // 任务列表每 2.5 秒轮询一次，关掉弹窗后自然会刷新，不用额外触发
+          onClose={() => setOverlay(null)}
+        />
       )}
     </div>
   )

@@ -1,6 +1,5 @@
 import {
   AudioLines,
-  Bot,
   Check,
   CloudDownload,
   Download,
@@ -14,12 +13,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api } from '../lib/api'
-import { invalidateAiProviders } from '../lib/ai'
 import { shortModelName } from '../lib/labels'
 import { recognitionModels } from '../lib/models'
-import type { AiProviderCatalog, AiProviderType, AppSettings, RecognitionModel, TtsConfig } from '../types'
+import type { AppSettings, RecognitionModel, TtsConfig } from '../types'
 
-const defaults: AppSettings = { theme: 'system', default_model: '', prefer_subtitle: false, keep_media: false, storage_path: '', fallback_api_key_set: false, ai_provider: 'deepseek', ai_model: '', ai_proxy: '', tts_model: '', tts_voice: null }
+const defaults: AppSettings = { theme: 'system', default_model: '', prefer_subtitle: false, keep_media: false, storage_path: '', fallback_api_key_set: false, tts_model: '', tts_voice: null }
 
 export function SettingsPage() {
   const [settings, setSettings] = useState(defaults)
@@ -37,14 +35,8 @@ export function SettingsPage() {
   const [modelsReloadKey, setModelsReloadKey] = useState(0)
   // 兜底解析的 Key 只写不读：输入框留空表示「不动已配置的 Key」，填了并失焦/回车才提交
   const [apiKey, setApiKey] = useState('')
-  // Codex 代理：null 表示「没在编辑」，显示服务端值；打字期间先留在草稿里
-  const [proxyDraft, setProxyDraft] = useState<string | null>(null)
   // 版本号：只用于「关于」里显示当前是哪个版本，不联网
   const [version, setVersion] = useState('')
-  // AI 驱动清单：本机引擎要探测登录态（并读一次对话模型），所以进来就重新取一次
-  const [aiCatalog, setAiCatalog] = useState<AiProviderCatalog | null>(null)
-  const [aiError, setAiError] = useState('')
-  const [aiReloadKey, setAiReloadKey] = useState(0)
   // 语音合成：模型与音色清单（音色来自 ZipVoice 的参考音频）
   const [ttsConfig, setTtsConfig] = useState<TtsConfig | null>(null)
 
@@ -73,8 +65,6 @@ export function SettingsPage() {
           delete merged.fallback_api_key
           applySettings(merged)
           setSavedOnce(true)
-          // 编辑页/预览弹窗缓存了驱动清单，换过驱动之后必须作废，否则还按旧的选择分流
-          invalidateAiProviders()
           if ('theme' in patch) {
             window.dispatchEvent(new CustomEvent('vtw:theme', { detail: saved.theme }))
           }
@@ -128,24 +118,6 @@ export function SettingsPage() {
 
   useEffect(() => {
     let active = true
-    api.aiProviders()
-      .then((catalog) => {
-        if (!active) return
-        setAiCatalog(catalog)
-        setAiError('')
-      })
-      .catch(() => {
-        if (active) setAiError('AI 驱动读取失败，请检查本地服务后重试。')
-      })
-    return () => {
-      active = false
-    }
-  }, [aiReloadKey])
-
-  // 语音合成的可选模型与音色：模型没装时下拉里仍列出来（标「未安装」），
-  // 音色表则完全来自模型规格，这里只读不改
-  useEffect(() => {
-    let active = true
     api
       .ttsConfig()
       .then((next) => {
@@ -176,34 +148,14 @@ export function SettingsPage() {
   }, [modelsReloadKey])
 
   /**
-   * 当前选中的驱动。
-   *
-   * 保存过的驱动可能已经不可用（客户端退登、模型下架），这时按后端返回的 preference 显示，
-   * 免得界面上「选中一个选不了的项」，用户一保存又变成另一个驱动。
+   * 当前选中的语音模型（空串表示「自动」）；用来提示「未安装」。
    */
-  const savedAiProvider = aiCatalog?.providers.find((provider) => provider.type === settings.ai_provider)
-  const aiProvider = savedAiProvider?.available
-    ? savedAiProvider
-    : aiCatalog?.providers.find((provider) => provider.type === aiCatalog.preference.provider) ?? null
-  /** 设置里选中的语音模型（空串表示「自动」）；用来提示「未安装」。 */
   const ttsSelected = ttsConfig?.models.find((model) => model.id === settings.tts_model) ?? null
-  /**
-   * 用不了的本机驱动。它们在下拉里是 disabled、选不中，所以原因必须单独列出来，
-   * 否则用户只看到「（不可用）」却不知道是缺依赖、没登录还是模型下架。
-   */
-  const unavailableProviders = (aiCatalog?.providers ?? []).filter((provider) => !provider.available)
-  // 保存的模型可能已下架：列表里没有就回到该驱动的默认模型，避免下拉显示空白
-  const aiModelValue =
-    aiProvider && aiProvider.models.some((model) => model.id === settings.ai_model)
-      ? settings.ai_model
-      : aiProvider?.default_model ?? ''
-
-  /** 换驱动时把模型一起带回该驱动的默认值，否则会留着上一个驱动的模型名。 */
-  function chooseAiProvider(type: AiProviderType) {
-    const entry = aiCatalog?.providers.find((provider) => provider.type === type)
-    save({ ai_provider: type, ai_model: entry?.default_model ?? '' })
-  }
-
+  // 保存的语音模型可能已下架（例如被移除的 int8 规格）：列表里没有就回到「自动」，
+  // 否则下拉框会显示成空白，看起来像设置丢了。
+  const ttsModelValue = ttsConfig?.models.some((model) => model.id === settings.tts_model)
+    ? settings.tts_model
+    : ''
   /**
    * 存过的默认识别模型现在不在可选项里（模型被移除或不再展示）时，保留一个占位项。
    * 不做回落覆盖：直接改掉用户的设置会让他们以为模型还在，只提示重新选择。
@@ -226,18 +178,11 @@ export function SettingsPage() {
     save({ fallback_api_key: '' })
   }
 
-  /** 代理地址：失焦时才提交，打字过程中不被自动保存打断。 */
-  function commitProxy() {
-    if (proxyDraft === null) return
-    save({ ai_proxy: proxyDraft.trim() })
-    setProxyDraft(null)
-  }
-
 
   return (
     <div className="page settings-page">
       <header className="page-header">
-        <div><h1>设置</h1><p>默认识别模型、AI 总结驱动、外观与本地存储。改动会即时保存，不需要手动提交。</p></div>
+        <div><h1>设置</h1><p>默认识别模型、语音合成、外观与本地存储。改动会即时保存，不需要手动提交。</p></div>
         {/* 状态放在页头：下面每个区块都是自动保存的，没有一个「提交」按钮可以挂提示 */}
         {(saving || savedOnce) && (
           <span className={saving ? 'autosave-status unsaved' : 'autosave-status'} role="status">
@@ -272,84 +217,14 @@ export function SettingsPage() {
           </label>
         </section>
         <section className="settings-section panel">
-          <div className="settings-heading"><span><Bot size={19} /></span><div><h2>AI 驱动</h2><p>「AI 总结」交给哪个 AI 来做。</p></div></div>
-          <div className="setting-row">
-            <span>
-              <label htmlFor="ai-provider"><strong>总结使用的 AI</strong></label>
-              <small>DeepSeek 会打开网页、用你自己的账号完成；WorkBuddy / Codex 直接复用本机客户端已登录的账号，摘要回到这里展示，不跳转浏览器。</small>
-            </span>
-            <div className="setting-control">
-              <select
-                id="ai-provider"
-                value={aiProvider?.type ?? settings.ai_provider}
-                onChange={(event) => chooseAiProvider(event.target.value as AiProviderType)}
-              >
-                {!aiCatalog && <option value={settings.ai_provider}>{settings.ai_provider === 'deepseek' ? 'DeepSeek · 网页版' : settings.ai_provider}</option>}
-                {(aiCatalog?.providers ?? []).map((provider) => (
-                  <option key={provider.type} value={provider.type} disabled={!provider.available}>
-                    {provider.name}{provider.available ? '' : '（不可用）'}
-                  </option>
-                ))}
-              </select>
-              {aiError && <span className="field-error" role="alert">{aiError}<button className="text-button" type="button" onClick={() => setAiReloadKey((value) => value + 1)}>重试</button></span>}
-              {!aiError && aiProvider && <small className="field-hint">{aiProvider.message || aiProvider.note}</small>}
-            </div>
-          </div>
-          {/* 不可用的驱动在下拉里是 disabled 的，选不中，上面的 field-hint 也就只显示当前
-              选中那一个。不把原因单独列出来的话，用户只会看到「（不可用）」三个字，
-              而「为什么不可用、该怎么办」全在后端返回的 message 里，等于白写了。 */}
-          {!aiError && unavailableProviders.length > 0 && (
-            <div className="ai-unavailable">
-              <strong>这些驱动暂时用不了</strong>
-              {unavailableProviders.map((provider) => (
-                <small key={provider.type}>
-                  <b>{provider.name}</b>：{provider.message || '原因未知'}
-                </small>
-              ))}
-            </div>
-          )}
-          {/* 只有本机驱动才有模型可选；DeepSeek 的模型在它自己网页里选 */}
-          {aiProvider && aiProvider.models.length > 0 && (
-            <label className="setting-row" htmlFor="ai-model">
-              <span>
-                <strong>对话模型</strong>
-                <small>本机账号当前开放的对话模型；默认用列表里的第一个。</small>
-              </span>
-              <select id="ai-model" value={aiModelValue} onChange={(event) => save({ ai_model: event.target.value })}>
-                {aiProvider.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-              </select>
-            </label>
-          )}
-          {/* chatgpt.com 通常要走代理，Codex 单独留一个可选项 */}
-          {aiProvider?.type === 'codex' && (
-            <label className="setting-row" htmlFor="ai-proxy">
-              <span>
-                <strong>Codex 代理（可选）</strong>
-                <small>本机直连 chatgpt.com 不通时填代理地址；留空则用系统环境变量里的代理设置，只对 Codex 生效。</small>
-              </span>
-              <input
-                id="ai-proxy"
-                type="text"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="http://127.0.0.1:7890"
-                value={proxyDraft ?? settings.ai_proxy}
-                onChange={(event) => setProxyDraft(event.target.value)}
-                onBlur={commitProxy}
-                onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
-              />
-            </label>
-          )}
-        </section>
-        <section className="settings-section panel">
           <div className="settings-heading"><span><AudioLines size={19} /></span><div><h2>语音合成</h2><p>「语音合成」页默认用哪个模型和音色。</p></div></div>
           <div className="setting-row">
             <span>
               <label htmlFor="tts-model"><strong>默认语音模型</strong></label>
-              <small>把文案读成音频的本地模型（ZipVoice，CPU 推理）。没装的话到「语音合成」页或「模型管理」下载，约 156 MB。</small>
+              <small>把文案读成音频的本地模型（ZipVoice，CPU 推理）。没装的话到「语音合成」页或「模型管理」下载，约 506 MB。</small>
             </span>
             <div className="setting-control">
-              <select id="tts-model" value={settings.tts_model} onChange={(event) => save({ tts_model: event.target.value })}>
+              <select id="tts-model" value={ttsModelValue} onChange={(event) => save({ tts_model: event.target.value })}>
                 <option value="">自动（用已安装的那个）</option>
                 {(ttsConfig?.models ?? []).map((model) => (
                   <option key={model.id} value={model.id} disabled={!model.ready}>

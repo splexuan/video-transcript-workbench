@@ -212,16 +212,12 @@ echo [3/6] 检查后端依赖
 rem pystray / PIL 用于系统托盘；缺少时仅会没有托盘入口，不影响程序运行。
 "%VTW_PYTHON%" -c "import PyInstaller, faster_whisper, pystray, PIL" >nul 2>nul
 if errorlevel 1 (
-    echo    缺少打包或精准识别依赖，正在安装 .[dev,accurate,ai] ...
-    "%VTW_PYTHON%" -m pip install -e ".[dev,accurate,ai]"
+    echo    缺少打包或精准识别依赖，正在安装 .[dev,accurate] ...
+    "%VTW_PYTHON%" -m pip install -e ".[dev,accurate]"
     if errorlevel 1 goto :fail
 ) else (
     echo    后端依赖已齐备。
 )
-rem 本机 AI 驱动：cryptography 只有读 WorkBuddy 加密登录态时才用得到，缺了不算打包失败，
-rem 只是产物里那一种登录态读不了，所以这里给提示而不是中断构建。
-"%VTW_PYTHON%" -c "import cryptography" >nul 2>nul
-if errorlevel 1 echo    [提示] 未安装 cryptography：产物里 WorkBuddy 加密登录态读不了（可在 backend 下执行 pip install -e ".[ai]" 后重打）
 
 echo.
 echo [4/6] 关闭正在运行的旧版本

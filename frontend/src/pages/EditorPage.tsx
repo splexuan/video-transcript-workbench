@@ -1,9 +1,9 @@
-import { ArrowLeft, Bot, Check, Copy, Film, Info, RefreshCw, RotateCcw, Sparkles } from 'lucide-react'
+import { ArrowLeft, Bot, BookOpen, Check, Copy, Film, Info, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
-import { AiSummaryModal } from '../components/AiSummaryView'
 import { LoadingState } from '../components/LoadingState'
+import { AudioTrackPlayer } from '../components/AudioTrackPlayer'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { api } from '../lib/api'
 import { useAiSummary } from '../lib/ai'
@@ -44,20 +44,60 @@ function decodeEntities(value: string) {
 
 type TextView = 'timeline' | 'plain'
 
+export interface DocumentEditorProps {
+  documentId: string
+  /** 已有详情时直接渲染，省去打开弹窗时再拉一次 */
+  initialDocument?: DocumentDetail | null
+  /** 整页模式下的返回落点；弹窗模式（传了 onClose）不用 */
+  backTo?: string
+  backLabel?: string
+  /** 传了就是弹窗模式：左侧的返回换成关闭，不再做页面导航 */
+  onClose?: () => void
+  /** 有未落盘的改动时为 true：弹窗据此决定关闭前要不要确认 */
+  onDirtyChange?: (dirty: boolean) => void
+  /** 弹窗模式：保存后切回只读阅读态，并把刚保存的详情带过去，省一次闪烁 */
+  onSwitchToRead?: (document: DocumentDetail | null) => void
+}
+
+/**
+ * 编辑页的整页入口。弹窗模式复用同一个 DocumentEditor，见 DocumentOverlay。
+ */
 export function EditorPage() {
   const { id = '' } = useParams()
   const location = useLocation()
+  const nav = (location.state ?? null) as EditorNavState | null
+  // 返回按钮回到进入编辑页的那一页；直接打开链接时没有来源，退回文案库
+  return (
+    <DocumentEditor
+      documentId={id}
+      backTo={nav?.from ?? '/library'}
+      backLabel={nav?.label ?? '文案库'}
+    />
+  )
+}
+
+/**
+ * 文案编辑器：整页与弹窗共用。
+ *
+ * 两种外壳只差工具栏左侧那一下：整页是「返回上一页」，弹窗是「关闭」——
+ * 列表页始终挂在弹窗后面，关掉就回到原来的滚动位置，不需要再导航一次。
+ */
+export function DocumentEditor({
+  documentId,
+  initialDocument = null,
+  backTo = '/library',
+  backLabel = '文案库',
+  onClose,
+  onDirtyChange,
+  onSwitchToRead,
+}: DocumentEditorProps) {
   const navigate = useNavigate()
   const confirm = useConfirm()
   // AI 总结的分流与结果弹窗：驱动从设置读，跳网页还是用本机账号由它决定
   const aiSummary = useAiSummary()
   // 窄屏下来源面板默认收起；宽屏时这个状态不起作用（面板常驻）
   const [sourceOpen, setSourceOpen] = useState(false)
-  const nav = (location.state ?? null) as EditorNavState | null
-  // 返回按钮回到进入编辑页的那一页；直接打开链接时没有来源，退回文案库
-  const backTo = nav?.from ?? '/library'
-  const backLabel = nav?.label ?? '文案库'
-  const [document, setDocument] = useState<DocumentDetail | null>(null)
+  const [document, setDocument] = useState<DocumentDetail | null>(initialDocument)
   const [loadError, setLoadError] = useState('')
   // 加载失败后点「重试」递增，重新拉取文档
   const [reloadKey, setReloadKey] = useState(0)
@@ -72,6 +112,8 @@ export function EditorPage() {
   // 播放中的分段：音轨播放时高亮当前句，点击时间码可跳到该句
   const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
+  // 拖动音轨进度时，时间轴框跟着跳，但只跳框内的滚动，不碰页面
+  const scrubbingRef = useRef(false)
   // 默认打开全文阅读，需要按时间定位或改字时再切到时间轴
   const [view, setView] = useState<TextView>('plain')
   // 整篇草稿：整篇一个框，改动先留在本地，保存/切视图时才落回分段，
@@ -93,9 +135,16 @@ export function EditorPage() {
     currentTextRef.current = wholeDraft ?? wholeText
   }, [wholeDraft, wholeText])
 
+  // 初始详情只消费一次：弹窗把阅读态已经有的一份传进来，就不必再拉一次。
+  // 换文档或点重试时 seed 已经清空，照常请求。
+  const seedRef = useRef(initialDocument ? { id: documentId } : null)
   useEffect(() => {
+    if (seedRef.current?.id === documentId) {
+      seedRef.current = null
+      return
+    }
     let active = true
-    api.document(id)
+    api.document(documentId)
       .then((next) => {
         if (active) setDocument(next)
       })
@@ -105,7 +154,16 @@ export function EditorPage() {
     return () => {
       active = false
     }
-  }, [id, reloadKey])
+  }, [documentId, reloadKey])
+
+  // 把「有没有未落盘的改动」告诉弹窗外壳：关闭按钮、Esc、点遮罩都走同一个守卫
+  const dirtyNotify = useRef(onDirtyChange)
+  useEffect(() => {
+    dirtyNotify.current = onDirtyChange
+  })
+  useEffect(() => {
+    dirtyNotify.current?.(!saved)
+  }, [saved])
 
   useEffect(() => {
     if (saved) return
@@ -181,23 +239,16 @@ export function EditorPage() {
   }
 
   /**
-   * AI 总结：按「设置 - AI 驱动」的选择分流。
-   *
-   * DeepSeek 会把指令带进网页（见 lib/deepseek），本机驱动（WorkBuddy / Codex）则在
-   * 后台跑完、结果回到弹窗里展示，不跳转浏览器。
+   * AI 总结：把文案与指令带到 DeepSeek 网页（见 lib/deepseek），本机不做推理。
    */
   async function summarize() {
     if (!document) return
     setActionError('')
     setActionMessage('')
-    const result = await aiSummary.start(document.id, document.title, currentPlainText())
-    if (result.kind === 'browser') {
-      const { message, isError } = describeSummaryOutcome(result.outcome)
-      if (isError) setActionError(message)
-      else setActionMessage(message)
-      return
-    }
-    if (result.kind === 'error') setActionError(result.message)
+    const result = await aiSummary.start(document.title, currentPlainText())
+    const { message, isError } = describeSummaryOutcome(result.outcome)
+    if (isError) setActionError(message)
+    else setActionMessage(message)
   }
 
   async function download(format: 'txt' | 'srt' | 'vtt' | 'json') {
@@ -353,12 +404,40 @@ export function EditorPage() {
     void audio.play()
   }
 
-  // 播放时把当前句滚进视野；用户正在某个输入框里打字时不打扰
+  /**
+   * 把当前句滚进时间轴框的视野。
+   *
+   * 只改框自己的 scrollTop，不用 `scrollIntoView`：后者会顺带滚动所有可滚动祖先，
+   * 页面依旧会被拽走。这里按「框的上下边」算一个最小位移，效果等同 `block: nearest`，
+   * 但只作用于时间轴框。拖进度条时用瞬间跳转，正常播放时用平滑滚动。
+   */
   useEffect(() => {
     if (activeSegmentId === null || view !== 'timeline') return
     if (window.document.activeElement instanceof HTMLTextAreaElement) return
     const row = window.document.querySelector(`[data-segment-id="${activeSegmentId}"]`)
-    row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    const panel = row?.closest<HTMLElement>('.segment-panel')
+    if (!row || !panel) return
+    const margin = 12
+    const rowBox = row.getBoundingClientRect()
+    const panelBox = panel.getBoundingClientRect()
+    let delta = 0
+    if (rowBox.top < panelBox.top + margin) {
+      delta = rowBox.top - panelBox.top - margin
+    } else if (
+      rowBox.bottom > panelBox.bottom - margin &&
+      rowBox.height < panelBox.height - margin * 2
+    ) {
+      delta = rowBox.bottom - panelBox.bottom + margin
+    }
+    if (delta !== 0) {
+      panel.scrollBy({
+        top: delta,
+        // 拖动进度条、或跳转跨度超过一屏（点时间码/大跨度 seek）时直接落位；
+        // 正常播放时一次只挪一行，平滑滚动更跟眼。
+        behavior:
+          scrubbingRef.current || Math.abs(delta) > panel.clientHeight ? 'auto' : 'smooth',
+      })
+    }
   }, [activeSegmentId, view])
 
   /** 切换视图前先把未保存的改动存下来，再收起草稿（时间轴直接看分段）。 */
@@ -375,8 +454,23 @@ export function EditorPage() {
     setView(next)
   }
 
+  /** 弹窗模式：保存后回到只读预览；存不下来就留在编辑态让用户处理。 */
+  async function switchToRead() {
+    let latest = document
+    if (!saved) {
+      try {
+        latest = (await persistDocument()) ?? document
+      } catch (reason) {
+        setActionError(reason instanceof Error ? reason.message : '保存失败，请稍后重试')
+        return
+      }
+    }
+    setWholeDraft(null)
+    onSwitchToRead?.(latest)
+  }
+
   /**
-   * 带着未保存的改动离开时先问一句。改成自绘弹窗后不能再同步返回，
+   * 整页模式下带着未保存的改动离开时先问一句。改成自绘弹窗后不能再同步返回，
    * 所以先拦住默认跳转，等到用户确认了再自己 navigate 过去。
    */
   function confirmLeave(event: MouseEvent<HTMLAnchorElement>) {
@@ -395,13 +489,15 @@ export function EditorPage() {
 
   if (loadError) {
     return (
-      <div className="page">
+      <div className="page editor-load-error">
         <p className="form-message error" role="alert">{loadError}</p>
         <div className="error-actions">
           <button className="secondary-button" type="button" onClick={() => { setLoadError(''); setReloadKey((key) => key + 1) }}>
             <RefreshCw size={15} /> 重试
           </button>
-          <Link className="text-button" to={backTo}>返回{backLabel}</Link>
+          {onClose
+            ? <button className="text-button" type="button" onClick={onClose}>关闭</button>
+            : <Link className="text-button" to={backTo}>返回{backLabel}</Link>}
         </div>
       </div>
     )
@@ -416,11 +512,34 @@ export function EditorPage() {
   }
 
   return (
-    <div className="editor-page">
+    <div className={`editor-page${view === 'timeline' ? ' timeline-mode' : ''}`}>
       <header className="editor-toolbar">
-        <Link className="icon-button" to={backTo} aria-label={`返回${backLabel}`} title={`返回${backLabel}`} onClick={confirmLeave}><ArrowLeft size={19} /></Link>
-        <div className="editor-title-group"><input aria-label="文案标题" title={document.title} value={document.title} onChange={(event) => { setDocument({ ...document, title: event.target.value }); setSaved(false) }} /><PlatformBadge platform={document.platform} /></div>
+        {onClose ? (
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onClose}
+            aria-label="关闭编辑，返回列表"
+            title="关闭（返回列表）"
+          >
+            <X size={19} />
+          </button>
+        ) : (
+          <Link className="icon-button" to={backTo} aria-label={`返回${backLabel}`} title={`返回${backLabel}`} onClick={confirmLeave}><ArrowLeft size={19} /></Link>
+        )}
+        <div className="editor-title-group"><input aria-label="文案标题" title={document.title} value={document.title} onChange={(event) => { setDocument({ ...document, title: event.target.value }); setSaved(false) }} /></div>
         <div className="editor-actions">
+          {/* 弹窗里只读预览就在同一层：不需要关掉再重新打开 */}
+          {onSwitchToRead && (
+            <button
+              className="secondary-button editor-read-button"
+              type="button"
+              onClick={() => void switchToRead()}
+              title="保存并切回只读预览"
+            >
+              <BookOpen size={16} /> 阅读
+            </button>
+          )}
           {/* 只在窄屏出现：展开被折叠的来源信息（封面、作者、时长、音轨播放器） */}
           <button
             className="icon-button editor-source-toggle"
@@ -433,13 +552,13 @@ export function EditorPage() {
           >
             <Info size={18} />
           </button>
-          <button className="secondary-button" type="button" onClick={() => void copyPlainText()}><Copy size={16} /> 复制全文</button>
+          <button className="secondary-button editor-copy-button" type="button" onClick={() => void copyPlainText()}><Copy size={16} /> 复制全文</button>
           <button
             className="secondary-button"
             type="button"
             onClick={() => void summarize()}
             disabled={aiSummary.resolving}
-            title="按「设置 - AI 驱动」的选择做总结：DeepSeek 跳网页，WorkBuddy / Codex 用本机已登录的账号在这台电脑上跑"
+            title="把文案与总结指令带到 DeepSeek 网页，用你自己的账号完成总结"
           >
             <Bot size={16} /> {aiSummary.resolving ? '准备中…' : 'AI 总结'}
           </button>
@@ -461,7 +580,10 @@ export function EditorPage() {
             />
           )}
           <div className="source-details">
-            <span>来源</span>
+            <div className="source-heading">
+              <span>来源</span>
+              <PlatformBadge platform={document.platform} />
+            </div>
             <a href={document.source_type === 'url' ? document.source_value : undefined} target="_blank" rel="noreferrer" title={document.source_value}>{document.source_value}</a>
             <button className="source-copy" type="button" onClick={() => void copySource()}><Copy size={13} /> {copiedSource ? '已复制' : '复制链接'}</button>
             <dl>
@@ -481,11 +603,22 @@ export function EditorPage() {
           {document.media_available && (
             <div className="media-panel">
               <span><Film size={13} /> 原始音轨</span>
-              <audio ref={audioRef} className="media-player" controls preload="metadata" onTimeUpdate={onAudioTimeUpdate} src={api.mediaUrl(document.id)} />
+              <AudioTrackPlayer
+                key={document.id}
+                src={api.mediaUrl(document.id)}
+                audioRef={audioRef}
+                onTimeUpdate={onAudioTimeUpdate}
+                onScrubStart={() => {
+                  scrubbingRef.current = true
+                }}
+                onScrubEnd={() => {
+                  scrubbingRef.current = false
+                }}
+              />
             </div>
           )}
         </aside>
-        <main className="transcript-editor" aria-label="文案编辑器">
+        <main className={`transcript-editor${view === 'timeline' ? ' timeline-mode' : ''}`} aria-label="文案编辑器">
           <div className="transcript-heading">
             <div><h1>校对文案</h1><span className="editor-subtitle">{view === 'timeline' ? `时间轴 · 共 ${document.segments.length} 段 · ${wordCount} 字` : `全文 · 整篇编辑（${document.segments.length} 段）· ${wordCount} 字`}</span></div>
             <div className="heading-side">
@@ -511,35 +644,37 @@ export function EditorPage() {
             <span>整理成带标点的自然段并直接生效；不满意可用「恢复原始分段」退回。</span>
           </div>
           {view === 'timeline' ? (
-            <div className="segment-list">
-              {document.segments.map((segment, index) => {
-                const edited = segment.raw_text !== segment.text
-                return (
-                  <div
-                    className={`segment-row${activeSegmentId === segment.id ? ' playing' : ''}`}
-                    data-segment-id={segment.id}
-                    key={segment.id}
-                  >
-                    {/* 时间码可点：跳到这句开始播放，跟听校对时不用自己拖进度条 */}
-                    <button
-                      className="timecode"
-                      type="button"
-                      onClick={() => seek(segment)}
-                      disabled={segment.start_ms === null}
-                      title={segment.start_ms === null ? undefined : '跳到这句播放'}
+            <div className="segment-panel">
+              <div className="segment-list">
+                {document.segments.map((segment, index) => {
+                  const edited = segment.raw_text !== segment.text
+                  return (
+                    <div
+                      className={`segment-row${activeSegmentId === segment.id ? ' playing' : ''}`}
+                      data-segment-id={segment.id}
+                      key={segment.id}
                     >
-                      {timecode(segment.start_ms)}
-                    </button>
-                    <span className="segment-node" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
-                    <textarea value={segment.text} rows={1} onChange={(event) => { const segments = document.segments.map((item) => item.id === segment.id ? { ...item, text: event.target.value } : item); setDocument({ ...document, segments }); setSaved(false) }} onBlur={() => { if (!saved) void save({ silent: true }) }} aria-label={`第 ${index + 1} 段文案`} />
-                    {edited && (
-                      <button className="segment-revert" type="button" onClick={() => revertSegment(segment)} title="恢复识别原文" aria-label={`恢复第 ${index + 1} 段的识别原文`}>
-                        <RotateCcw size={13} />
+                      {/* 时间码可点：跳到这句开始播放，跟听校对时不用自己拖进度条 */}
+                      <button
+                        className="timecode"
+                        type="button"
+                        onClick={() => seek(segment)}
+                        disabled={segment.start_ms === null}
+                        title={segment.start_ms === null ? undefined : '跳到这句播放'}
+                      >
+                        {timecode(segment.start_ms)}
                       </button>
-                    )}
-                  </div>
-                )
-              })}
+                      <span className="segment-node" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+                      <textarea value={segment.text} rows={1} onChange={(event) => { const segments = document.segments.map((item) => item.id === segment.id ? { ...item, text: event.target.value } : item); setDocument({ ...document, segments }); setSaved(false) }} onBlur={() => { if (!saved) void save({ silent: true }) }} aria-label={`第 ${index + 1} 段文案`} />
+                      {edited && (
+                        <button className="segment-revert" type="button" onClick={() => revertSegment(segment)} title="恢复识别原文" aria-label={`恢复第 ${index + 1} 段的识别原文`}>
+                          <RotateCcw size={13} />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           ) : (
             <div className="fulltext-view">
@@ -586,8 +721,6 @@ export function EditorPage() {
           <div className="inspector-block"><span>导出格式</span><div className="format-chips">{(['txt', 'srt', 'vtt', 'json'] as const).map((format) => <button key={format} type="button" onClick={() => void download(format)} disabled={Boolean(exporting)}>{exporting === format ? '…' : format.toUpperCase()}</button>)}</div></div>
         </aside>
       </div>
-      {/* 本机驱动的总结没有「跳转」这一步，结果用弹窗落下来（DeepSeek 走新标签页） */}
-      {aiSummary.target && <AiSummaryModal target={aiSummary.target} onClose={aiSummary.close} />}
     </div>
   )
 }

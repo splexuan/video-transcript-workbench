@@ -8,8 +8,9 @@ ZipVoice 与 Kokoro 的根本差别：它不是「从固定音色库里挑一个
 一段音频而不是编号，质量上限由参考音频决定：底噪、混响、环境声都会被一并克隆进去
 （实测谱平坦度：干净参考 0.14、带底噪参考 0.64）。所以引导用户用干净的单人录音是关键。
 
-实测（12 核 CPU，int8 版，4 采样步、4 线程）：60 字约 16.4 秒音频，RTF 0.47。
-并行提速仍靠「多实例」：把句子分给几个实例同时合成（见 lanes / _threads）。
+实测（12 核 CPU，fp32 版，8 采样步、3 线程）：41 字约 8.4 秒音频，单实例 RTF 1.34。
+并行提速仍靠「多实例」：把句子分给几个实例同时合成（见 lanes / _threads），
+12 核开 4 路时墙钟时间约摊到 1/4。
 """
 from __future__ import annotations
 
@@ -38,8 +39,9 @@ from app.infrastructure.text_numbers import normalize_chinese_numbers
 logger = logging.getLogger(__name__)
 
 ENGINE = "tts"
-DEFAULT_MODEL_ID = "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"
-# 单次合成上限。按 RTF≈0.5 估算 2000 字≈7 分钟音频；再长就该分段出稿，而不是让一个请求挂着。
+DEFAULT_MODEL_ID = "sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia"
+# 单次合成上限。按中文约 4.5 字/秒估算 2000 字≈7 分钟音频（单实例合成约 9 分钟）；
+# 再长就该分段出稿，而不是让一个请求挂着。
 MAX_CHARS = 2000
 DEFAULT_SPEED = 1.0
 SPEED_RANGE = (0.6, 1.6)
@@ -48,8 +50,9 @@ SENTENCE_GAP_SECONDS = 0.22
 MAX_LANES = 4
 # 太短的碎句并进上一句：逐句合成会在句间插静音，碎句多了口气就断了
 MIN_SENTENCE_CHARS = 8
-# 采样步数：蒸馏版官方示例用 4，实测与 8/16 步在中文上听感无实质差别，代价只有一半。
-NUM_STEPS = 4
+# 采样步数：蒸馏版官方示例用 4；实测 4 步的音色细节明显偏弱，固定用 8。
+# 代价是单次合成耗时约为 4 步的两倍（fp32 版单实例 RTF 约 1.34）。
+NUM_STEPS = 8
 # ZipVoice 内部按这个长度自己分句（官方示例的取值），太小会切碎语气。
 MIN_CHAR_IN_SENTENCE = 30
 # 输出电平保护。实测未加保护时峰值会到 1.18~1.32，写 PCM_16 时超限部分被削掉，
@@ -119,8 +122,8 @@ _BUILTIN_VOICES = (
 )
 DEFAULT_VOICE = "leijun-1"
 
-# 参考音频的时长上限。ZipVoice 的耗时随参考音频长度增长明显（实测短参考 RTF 0.47、
-# 长的到 1.9），超过这个长度直接截断并给提示。
+# 参考音频的时长上限。ZipVoice 的耗时随参考音频长度增长明显（实测长参考的耗时
+# 可达短参考的数倍），超过这个长度直接截断并给提示。
 REFERENCE_MAX_SECONDS = 20.0
 # 裁剪时的下界：比这更短的片段克隆出的音色不稳，所以直接拒绝而不是默默接受。
 REFERENCE_MIN_SECONDS = 2.0
@@ -682,12 +685,10 @@ def load_reference(voice: Voice, model_id: str) -> tuple[np.ndarray, int]:
     return samples, int(rate)
 
 
-# ZipVoice 的模型文件要「成对」挑：编码器与解码器必须同代同精度，否则可能把 int8 的编码器
-# 配上 fp32 的解码器。int8 排在前面——它体积小、速度快，是默认那一档；想要更高精度就装
-# fp32 的包（另一个规格），那种目录里只有 fp32 的文件，顺序不影响。
+# ZipVoice 的模型文件要「成对」挑：编码器与解码器必须来自同一代布局，不能拿
+# encoder 配 fm_decoder。上游换过两代文件名，这里两代都认；int8 包已下架，
+# 实测它的音色细节损失明显，不值得为速度换回来。
 _MODEL_PAIRS = (
-    ("encoder.int8.onnx", "decoder.int8.onnx"),
-    ("text_encoder_int8.onnx", "fm_decoder_int8.onnx"),
     ("encoder.onnx", "decoder.onnx"),
     ("text_encoder.onnx", "fm_decoder.onnx"),
 )

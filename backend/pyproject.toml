@@ -34,12 +34,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# 本机 AI 驱动：WorkBuddy 新版客户端的登录字段是加密的，解密要用 cryptography。
-# 缺它时「明文登录字段」的客户端仍可正常使用，只是加密登录态会给出可执行的安装提示。
-# 安装命令：pip install ".[ai]"
-ai = [
-  "cryptography>=43,<47",
-]
 # 精准时间轴模式的可选引擎。安装命令：pip install ".[accurate]"
 accurate = [
   "faster-whisper>=1.1,<2",

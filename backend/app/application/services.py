@@ -57,18 +57,10 @@ DEFAULT_SETTINGS = {
     "storage_path": "",
     # 兜底解析接口的 API Key：加密后存在同一张设置表里，读取时只回传「是否已配置」
     "fallback_api_key": "",
-    # 「AI 总结」用哪个驱动：deepseek（跳网页）/ workbuddy / codex（本机登录态）；
-    # ai_model 为空表示交给驱动自己挑默认模型，ai_proxy 只给需要出网的 Codex 用。
-    "ai_provider": "deepseek",
-    "ai_model": "",
-    "ai_proxy": "",
     # 「语音合成」默认使用的模型与音色（音色是 ZipVoice 参考音频的 id）；留空表示用引擎默认值。
     "tts_model": "",
     "tts_voice": "",
 }
-
-# AI 驱动的白名单：设置值与数据库里的历史值都要落在这三个里，否则退回 DeepSeek。
-AI_PROVIDERS = ("deepseek", "workbuddy", "codex")
 
 # 兜底解析（第三方聚合接口）的 Key 设置项：只写不读，明文不出后端
 FALLBACK_API_KEY_SETTING = "fallback_api_key"
@@ -439,6 +431,52 @@ def create_job_batch(
     return batch
 
 
+def create_file_job_batch(
+    session: Session,
+    *,
+    paths: list[str],
+    title: str = "",
+    mode: str = "auto",
+    model_id: str | None = None,
+    prefer_subtitle: bool = True,
+) -> JobBatch:
+    """为一批已经落盘的本地文件建批次。
+
+    文件在任务结束/取消时会由 worker 清理，所以这里不做重试：失败后源文件
+    可能已经不在了，前端会提示重新导入，而不是拿一个失效路径再排一次队。
+    """
+
+    if not paths:
+        raise JobBatchValidationError("批次里至少要有一个文件")
+    batch_id = new_id()
+    batch = JobBatch(
+        id=batch_id,
+        title=(title or "").strip()[:300] or f"文件批次 {batch_id[:8]}",
+        kind="file",
+        control_status="active",
+        expected_count=len(paths),
+        client_request_id=f"upload-{uuid4()}",
+        request_fingerprint=hashlib.sha256("\n".join(paths).encode("utf-8")).hexdigest(),
+    )
+    for position, path in enumerate(paths, start=1):
+        batch.jobs.append(
+            _build_job(
+                JobCreate(
+                    source_type="file",
+                    source=path,
+                    mode=mode,
+                    model_id=model_id,
+                    prefer_subtitle=prefer_subtitle,
+                ),
+                batch_position=position,
+            )
+        )
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+    return batch
+
+
 def serialize_job_batch(batch: JobBatch, *, include_jobs: bool = False) -> JobBatchRead:
     counts = _batch_counts(batch)
     total = batch.expected_count
@@ -514,6 +552,9 @@ def cancel_job_batch(session: Session, batch: JobBatch) -> JobBatch:
 def retry_failed_job_batch(session: Session, batch: JobBatch) -> JobBatch:
     if any(job.status in {"queued", "running"} for job in batch.jobs):
         raise JobBatchControlError("批次还在处理中，结束后再重试失败项")
+    # 本地文件任务结束后源文件已从收件箱清掉，重试只会拿到失效路径。
+    if batch.kind == "file":
+        raise JobBatchControlError("本地文件批次无法重试失败项，请重新导入文件")
     failed_jobs = [job for job in batch.jobs if job.status == "failed"]
     if not failed_jobs:
         raise JobBatchControlError("这个批次没有失败任务")
@@ -1082,12 +1123,6 @@ def read_settings(session: Session) -> dict[str, str | bool | int | None]:
         "storage_path": merged["storage_path"],
         # Key 明文不回传，前端只知道配了没有
         "fallback_api_key_set": read_fallback_api_key(session) is not None,
-        # 白名单外的历史值一律退回 DeepSeek，避免前端拿到选不中的驱动
-        "ai_provider": merged["ai_provider"]
-        if merged["ai_provider"] in AI_PROVIDERS
-        else DEFAULT_SETTINGS["ai_provider"],
-        "ai_model": merged["ai_model"],
-        "ai_proxy": merged["ai_proxy"],
         # 语音合成：模型与音色都留空跟随引擎默认；音色 id 是字符串，读出来原样返回
         "tts_model": merged["tts_model"],
         "tts_voice": _text_setting(merged["tts_voice"]),

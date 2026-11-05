@@ -1,7 +1,4 @@
 import type {
-  AiProviderCatalog,
-  AiProviderType,
-  AiSummaryResult,
   AppSettings,
   AudioSelection,
   AuthorPage,
@@ -110,6 +107,15 @@ export const api = {
     }
     return response.json() as Promise<Job>
   },
+  /** 多文件作为同一个批次导入：后端一次收齐文件后建批次，右栏按批次显示进度。 */
+  uploadJobBatch: (files: File[], mode: string, modelId?: string | null, preferSubtitle = true) => {
+    const form = new FormData()
+    for (const file of files) form.append('files', file)
+    form.append('mode', mode)
+    if (modelId) form.append('model_id', modelId)
+    form.append('prefer_subtitle', String(preferSubtitle))
+    return request<JobBatchDetail>('/api/job-batches/upload', { method: 'POST', body: form })
+  },
   cancelJob: (id: string) => request<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
   /** 按原参数重新排队一次（失败/取消后的重试）。 */
   retryJob: (id: string) => request<Job>(`/api/jobs/${id}/retry`, { method: 'POST' }),
@@ -178,11 +184,6 @@ export const api = {
   settings: () => request<AppSettings>('/api/settings'),
   updateSettings: (payload: Partial<AppSettings>) =>
     request<AppSettings>('/api/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
-  /** AI 驱动清单：可用性、各自的模型、以及上次的选择（本机引擎的模型会联网取一次）。 */
-  aiProviders: () => request<AiProviderCatalog>('/api/ai/providers'),
-  /** 用所选的本机驱动（WorkBuddy / Codex）跑一次 AI 总结；DeepSeek 由前端跳网页完成。 */
-  aiSummarize: (payload: { title: string; text: string; provider?: AiProviderType; model?: string }) =>
-    request<AiSummaryResult>('/api/ai/summarize', { method: 'POST', body: JSON.stringify(payload) }),
   /** 语音合成页的配置：可选模型与音色、当前选择、估算依据。 */
   ttsConfig: () => request<TtsConfig>('/api/tts'),
   ttsVoices: () => request<TtsVoice[]>('/api/tts/voices'),

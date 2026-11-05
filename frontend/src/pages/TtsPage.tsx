@@ -14,6 +14,7 @@ import {
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { AudioTrackPlayer } from '../components/AudioTrackPlayer'
 import { Modal, ModalHeader } from '../components/Modal'
 import { VoiceCloneModal } from '../components/VoiceCloneModal'
 import { api } from '../lib/api'
@@ -68,6 +69,8 @@ export function TtsPage() {
   const [busy, setBusy] = useState(false)
   const [installing, setInstalling] = useState<{ percent: number; message: string } | null>(null)
   const mounted = useRef(true)
+  // 「本次结果」的播放器：换成与编辑页一致的波形条，整块轨道可点、可拖
+  const resultAudio = useRef<HTMLAudioElement>(null)
 
   /* ---- 音色克隆（弹窗） ---- */
   const [cloneOpen, setCloneOpen] = useState(false)
@@ -351,11 +354,6 @@ export function TtsPage() {
           ) : (
             <strong>{config.model?.name}</strong>
           )}
-          <small className="tts-model-note">
-            {config.models.filter((item) => item.ready).length > 1
-              ? 'fp32 人声细节更干净，但每开一个并行实例约占双倍内存'
-              : '只装了 int8 版；想要更干净的人声可在「设置 → 语音合成」里装 fp32 版'}
-          </small>
         </section>
       )}
 
@@ -505,8 +503,14 @@ export function TtsPage() {
                 )}
                 {job.status === 'completed' && (
                   <>
-                    {/* 音频直接来自后端文件，不用把整段音频塞进内存 */}
-                    <audio className="tts-player" controls preload="metadata" src={api.ttsAudioUrl(job.id)} />
+                    {/* 音频直接来自后端文件，不用把整段音频塞进内存；
+                        播放器与编辑页的原始音轨共用同一套波形交互，不再用浏览器原生控件 */}
+                    <AudioTrackPlayer
+                      key={job.id}
+                      src={api.ttsAudioUrl(job.id)}
+                      audioRef={resultAudio}
+                      showDownload={false}
+                    />
                     <div className="tts-result-meta">
                       <span>时长 {secondsLabel(job.duration)}</span>
                       <span>耗时 {secondsLabel(job.elapsed)}</span>

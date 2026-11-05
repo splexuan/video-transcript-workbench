@@ -376,7 +376,7 @@ def test_archive_marker_records_paths_relative_to_the_model_directory(tmp_path, 
 def test_download_skips_a_source_that_is_too_slow(isolated_models, monkeypatch) -> None:
     """慢源不重试，直接换下一个。
 
-    官方 GitHub 直连只有 47 KB/s，重试它也还是那么慢（104 MB 要等近 40 分钟），
+    官方 GitHub 直连只有 47 KB/s，重试它也还是那么慢（455 MB 要等两个多小时），
     所以判慢后必须跳出重试循环换源，而不是在同一个源上反复等待。
     """
 
@@ -423,11 +423,11 @@ def test_download_skips_a_source_that_is_too_slow(isolated_models, monkeypatch) 
 def test_zipvoice_puts_the_domestic_mirror_first() -> None:
     """ZipVoice 的源顺序：国内 ModelScope 镜像 → GitHub 加速 → 官方兜底。
 
-    官方直连实测 47 KB/s（104 MB 要等近 40 分钟），国内镜像 10 MB/s 量级；而加速代理
+    官方直连实测 47 KB/s（455 MB 要等两个多小时），国内镜像 10 MB/s 量级；而加速代理
     随时可能失效，所以官方源必须留在最后兜底。
     """
 
-    spec = model_catalog.require_spec("sherpa-onnx-zipvoice-distill-int8-zh-en-emilia")
+    spec = model_catalog.require_spec("sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia")
     assert spec.files, "语音合成模型应当有文件"
     for slot in spec.files:
         assert slot.urls[0].startswith("https://www.modelscope.cn/"), f"{slot.name} 国内镜像没排在最前"

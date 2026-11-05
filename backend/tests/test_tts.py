@@ -19,7 +19,7 @@ from sqlalchemy import text
 from app.application import tts_jobs
 from app.application.services import read_settings, update_settings
 from app.config import settings
-from app.domain import EngineUnavailableError
+from app.domain import EngineUnavailableError, ModelNotFoundError
 from app.infrastructure import database, model_store, tts_engine
 from app.infrastructure.database import SessionLocal, init_database
 from app.infrastructure.model_catalog import require_spec
@@ -27,7 +27,7 @@ from app.infrastructure.text_numbers import normalize_chinese_numbers
 from app.main import app
 from app.schemas import SettingPatch
 
-ZIPVOICE = "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"
+ZIPVOICE = "sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia"
 # vocoder 不在 tar 包里，由 model_store 在解压后单独下载，因此是归档之外的「附属文件」
 VOCODER = "vocos_24khz.onnx"
 
@@ -72,8 +72,8 @@ def _package_bytes(spec) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:bz2") as handle:
         entries = {
-            f"{spec.id}/encoder.int8.onnx": b"encoder",
-            f"{spec.id}/decoder.int8.onnx": b"decoder",
+            f"{spec.id}/encoder.onnx": b"encoder",
+            f"{spec.id}/decoder.onnx": b"decoder",
             f"{spec.id}/tokens.txt": b"tokens",
             f"{spec.id}/lexicon.txt": b"lexicon",
             f"{spec.id}/espeak-ng-data/phontab": b"phontab",
@@ -142,25 +142,25 @@ def test_archive_extract_strips_top_dir_and_blocks_escape(tmp_path, monkeypatch)
 def test_missing_core_model_file_is_not_reported_ready(tmp_path, monkeypatch) -> None:
     """缺 encoder / decoder 不能算「已就绪」——要等到真合成才报错就太晚了。
 
-    这正是 required_any 存在的原因：int8 与 fp32 的文件名不同，但缺哪一个都不行，
+    这正是 required_any 存在的原因：上游两代文件名不同，但缺哪一个都不行，
     而 required_paths（全都要有）表达不了这种关系。
     """
 
     spec, directory = _install_sample(tmp_path, monkeypatch)
     assert model_store.inspect(spec).state == "ready"
 
-    # 只剩 fp32 版文件名的 encoder 也算数（int8 版应当同样认 *.int8.onnx）
-    (directory / "encoder.int8.onnx").unlink()
-    (directory / "encoder.onnx").write_bytes(b"fp32-encoder")
+    # 换成另一代布局的 encoder（text_encoder）也算数
+    (directory / "encoder.onnx").unlink()
+    (directory / "text_encoder.onnx").write_bytes(b"text-encoder")
     assert model_store.inspect(spec).state == "ready"
 
-    # 两个 encoder 都没有 → 不就绪
-    (directory / "encoder.onnx").unlink()
+    # 两代 encoder 都没有 → 不就绪
+    (directory / "text_encoder.onnx").unlink()
     status = model_store.inspect(spec)
     assert status.state == "partial"
     assert "encoder" in status.message
 
-    # 补回来就恢复
+    # 补回任一代就恢复
     (directory / "encoder.onnx").write_bytes(b"fp32-encoder")
     assert model_store.inspect(spec).state == "ready"
 
@@ -169,11 +169,11 @@ def test_required_any_group_is_reported_together(tmp_path, monkeypatch) -> None:
     """整组缺失时报的是可读名字（两个候选都列出来），不是原始文件名。"""
 
     spec, directory = _install_sample(tmp_path, monkeypatch)
-    for name in ("decoder.int8.onnx", "decoder.onnx"):
+    for name in ("decoder.onnx", "fm_decoder.onnx"):
         (directory / name).unlink(missing_ok=True)
     status = model_store.inspect(spec)
     assert status.state == "partial"
-    assert "decoder.int8.onnx / decoder.onnx" in status.message
+    assert "decoder.onnx / fm_decoder.onnx" in status.message
 
 
 def test_missing_vocoder_keeps_the_model_partial(tmp_path, monkeypatch) -> None:
@@ -1112,39 +1112,40 @@ def test_missing_reference_audio_makes_the_model_incomplete(tmp_path, monkeypatc
         tts_engine.synthesize("测试一下。", model_id=spec.id, voice_id="leijun-1")
 
 
-def test_fp32_zipvoice_is_offered_as_an_option() -> None:
-    """int8 听着有底噪时能换非量化版：默认仍推荐体积小的 int8。"""
+def test_fp32_zipvoice_is_the_only_and_default_option() -> None:
+    """只保留未量化版：int8 的音色细节损失明显，已从清单下架。"""
 
     spec = require_spec("sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia")
     assert spec.archive is True
-    assert spec.recommended is False
+    assert spec.recommended is True
     assert [item.name for item in spec.files[1:]] == [VOCODER]
     assert tts_engine.DEFAULT_MODEL_ID == ZIPVOICE
+    with pytest.raises(ModelNotFoundError):
+        require_spec("sherpa-onnx-zipvoice-distill-int8-zh-en-emilia")
 
 
 def test_zipvoice_model_files_are_picked_in_pairs(tmp_path, monkeypatch) -> None:
-    """编码器与解码器必须成对挑：不能 int8 配 fp32，也不能只有一半就凑。"""
+    """编码器与解码器必须成对挑：两代布局各自配对，不能跨代混搭。"""
 
     monkeypatch.setattr(settings, "models_dir", tmp_path / "models")
-    int8_dir = model_store.spec_dir(require_spec("sherpa-onnx-zipvoice-distill-int8-zh-en-emilia"))
-    fp32_dir = model_store.spec_dir(require_spec("sherpa-onnx-zipvoice-distill-fp32-zh-en-emilia"))
-    int8_dir.mkdir(parents=True)
-    fp32_dir.mkdir(parents=True)
-
-    (int8_dir / "encoder.int8.onnx").write_bytes(b"x")
-    (int8_dir / "decoder.int8.onnx").write_bytes(b"x")
-    assert tts_engine._pick_model_pair(int8_dir)[0].name == "encoder.int8.onnx"  # noqa: SLF001
+    current = tmp_path / "current"
+    current.mkdir()
+    (current / "encoder.onnx").write_bytes(b"x")
+    (current / "decoder.onnx").write_bytes(b"x")
+    assert tts_engine._pick_model_pair(current)[0].name == "encoder.onnx"  # noqa: SLF001
 
     # 另一代布局的文件名（text_encoder / fm_decoder）同样认
-    (fp32_dir / "text_encoder.onnx").write_bytes(b"x")
-    (fp32_dir / "fm_decoder.onnx").write_bytes(b"x")
-    assert tts_engine._pick_model_pair(fp32_dir)[0].name == "text_encoder.onnx"  # noqa: SLF001
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "text_encoder.onnx").write_bytes(b"x")
+    (legacy / "fm_decoder.onnx").write_bytes(b"x")
+    assert tts_engine._pick_model_pair(legacy)[0].name == "text_encoder.onnx"  # noqa: SLF001
 
-    # 混精度不能凑对：只有 fp32 编码器配 int8 解码器
+    # 跨代混搭不能凑对：只有 encoder 配 fm_decoder
     mixed = tmp_path / "mixed"
     mixed.mkdir()
     (mixed / "encoder.onnx").write_bytes(b"x")
-    (mixed / "decoder.int8.onnx").write_bytes(b"x")
+    (mixed / "fm_decoder.onnx").write_bytes(b"x")
     with pytest.raises(EngineUnavailableError):
         tts_engine._pick_model_pair(mixed)  # noqa: SLF001
 

@@ -1,6 +1,6 @@
 """语音合成接口：配置、音色管理、提交合成任务、轮询进度、取音频。
 
-合成是慢活（int8 版 CPU 上单实例 RTF≈0.5，现在按核心数把句子摊到 2~4 个实例并行跑），
+合成是慢活（fp32 版、8 步采样 CPU 上单实例 RTF≈1.3，现在按核心数把句子摊到 2~4 个实例并行跑），
 所以走「提交任务 + 轮询」而不是一个长请求；音频存在数据目录的 tts/ 下，
 由 /audio 端点读取（wav 直接给，mp3 用 FFmpeg 现转）。
 """
@@ -12,7 +12,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -40,10 +40,10 @@ from app.schemas import (
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 SessionDep = Annotated[Session, Depends(get_session)]
 
-# 估算依据：中文约 4.5 字/秒，int8 版实测单实例合成耗时约为音频时长的 0.5 倍；
+# 估算依据：中文约 4.5 字/秒，fp32 版、8 步采样实测单实例合成耗时约为音频时长的 1.3 倍；
 # 实际等待还要按并行实例数摊薄（parallel_lanes），所以这里给的是单实例口径。
 CHARS_PER_SECOND = 4.5
-REALTIME_FACTOR = 0.5
+REALTIME_FACTOR = 1.3
 # 单个参考音频的大小上限：ZipVoice 的耗时随它明显变长，超过就没必要收下
 MAX_REFERENCE_BYTES = 20 * 1024 * 1024
 
@@ -276,8 +276,10 @@ def tts_voice_audio(voice_id: str) -> Response:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if not path.is_file():
         raise HTTPException(status_code=404, detail="参考音频已被删除，请重新上传")
-    return Response(
-        content=path.read_bytes(),
+    # FileResponse 支持 Range：波形编辑器要按选区起点跳转，浏览器必须能只取一段，
+    # 否则 seek 会把整段音频重新拉一遍、播放头退回开头。
+    return FileResponse(
+        path,
         media_type="audio/wav",
         headers=_disposition(f"参考音频-{voice_id}.wav", False),
     )
@@ -480,8 +482,9 @@ def tts_audio(
             media_type="audio/mpeg",
             headers=_disposition(f"语音合成-{stamp}.mp3", download),
         )
-    return Response(
-        content=path.read_bytes(),
+    # 同样用 FileResponse：播放器整块轨道都能点、能拖，Range 请求要真的生效
+    return FileResponse(
+        path,
         media_type="audio/wav",
         headers=_disposition(f"语音合成-{stamp}.wav", download),
     )

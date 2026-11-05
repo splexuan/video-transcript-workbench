@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Generic, Literal, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -227,12 +227,6 @@ class SettingPatch(BaseModel):
     storage_path: str | None = Field(default=None, max_length=1000)
     # 兜底解析接口的 API Key：只写不读（保存后接口只回传「是否已配置」），空串表示清除
     fallback_api_key: str | None = Field(default=None, max_length=200)
-    # 「AI 总结」用哪个驱动：deepseek（跳网页）/ workbuddy / codex（本机登录态）
-    ai_provider: Literal["deepseek", "workbuddy", "codex"] | None = None
-    # 本机驱动下的对话模型；留空由驱动自己挑默认模型
-    ai_model: str | None = Field(default=None, max_length=128)
-    # Codex 出网用的代理（本机可在「设置 - AI 驱动」里填）；留空走系统默认
-    ai_proxy: str | None = Field(default=None, max_length=500)
     # 「语音合成」默认用的模型与音色（音色 id 是 ZipVoice 的参考音频标识）；留空用引擎默认
     tts_model: str | None = Field(default=None, max_length=64)
     tts_voice: str | None = Field(default=None, max_length=64)
@@ -324,7 +318,7 @@ class TtsConfigRead(BaseModel):
     voice: str
     speed: float
     max_chars: int
-    # 语速与音质的关系：int8 版实测 RTF 约 0.5，多实例并行还能再摊薄
+    # 语速与音质的关系：fp32 版、8 步采样实测 RTF 约 1.3，多实例并行还能再摊薄
     chars_per_second: float
     realtime_factor: float
     parallel_lanes: int
@@ -360,26 +354,6 @@ class TtsJobRead(BaseModel):
     audio_url: str | None
     created_at: float
     updated_at: float
-
-
-class AiSummarizeRequest(BaseModel):
-    """AI 总结请求：正文由前端给（编辑页可能带着未保存的改动）。"""
-
-    title: str = Field(default="", max_length=300)
-    text: str = Field(min_length=1, max_length=200_000)
-    # 允许本次临时换驱动/模型；留空用设置里的选择
-    provider: Literal["workbuddy", "codex"] | None = None
-    model: str | None = Field(default=None, max_length=128)
-
-
-class AiSummaryRead(BaseModel):
-    """AI 总结结果：正文 + 是哪个驱动/模型产出的，便于界面标注来源。"""
-
-    provider: str
-    provider_name: str
-    model: str
-    text: str
-    usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class CookieWrite(BaseModel):

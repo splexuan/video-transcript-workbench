@@ -58,7 +58,6 @@ echo [完成] 基础环境就绪，现在可以双击 start.bat 启动。
 echo.
 echo 可选能力（按需再装，不装不影响启动，启动时会提示缺哪一项）：
 echo   精准时间轴识别       "%PY%" -m pip install -e ".[accurate]"
-echo   WorkBuddy 本机登录   "%PY%" -m pip install -e ".[ai]"
 goto :done
 
 

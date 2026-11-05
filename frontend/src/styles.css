@@ -611,67 +611,6 @@ button:disabled {
   padding: 0 10px;
 }
 
-/* ---------- AI 总结（本机驱动） ---------- */
-/* 编辑页放在弹窗里、预览弹窗里内联展开，所以这一块只管内容排版，不带自己的外壳 */
-.ai-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.ai-summary-source {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-.ai-summary-source small {
-  color: var(--text-muted);
-  font-weight: 400;
-}
-.ai-summary-state {
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  min-height: 128px;
-  color: var(--text-secondary);
-  text-align: center;
-}
-.ai-summary-state small,
-.ai-summary-actions small {
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
-}
-.ai-summary-text {
-  max-height: min(52vh, 460px);
-  padding: 16px 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-subtle);
-  color: var(--text);
-  font-size: var(--text-md);
-  line-height: var(--leading-relaxed);
-  /* 摘要是多段纯文本：保留换行，长链接也不撑破弹窗 */
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow-y: auto;
-}
-.ai-summary-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-/* 预览弹窗里把摘要挂在正文上方：一条分隔线划开，正文照旧看得见 */
-.ai-summary-inline {
-  margin-bottom: 16px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
-}
-
 /* ---------- 语音合成 ---------- */
 /* 卡片内边距：`.panel` 基础样式只有边框、圆角与阴影，padding 是给 workbench-grid /
    content-grid 里的卡片单独加的；这一页用的是裸 .panel，不补上就会让标题、正文框和
@@ -1150,10 +1089,6 @@ button:disabled {
   color: inherit;
   font: inherit;
 }
-.tts-model-note {
-  color: var(--text-muted);
-  font-size: var(--text-2xs);
-}
 /* 音色克隆弹窗 */
 .tts-clone {
   display: grid;
@@ -1493,6 +1428,96 @@ button:disabled {
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
 }
+/* 批量模式的来源切换：链接 / 本地文件。比顶层分段控件小一号，不喧宾夺主 */
+.batch-source-kind {
+  display: inline-flex;
+  gap: 4px;
+  justify-self: start;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius-sm) + 3px);
+  background: var(--surface-subtle);
+}
+.batch-source-kind button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+.batch-source-kind button.active {
+  color: var(--primary);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.batch-files {
+  display: grid;
+  gap: 10px;
+}
+.batch-file-drop {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 24px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  text-align: center;
+}
+.batch-file-drop strong {
+  font-size: var(--text-sm);
+}
+.batch-file-drop small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.batch-file-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.batch-file-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.batch-file-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-file-size {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.batch-file-list button {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+}
+.batch-file-list button:hover:not(:disabled) {
+  color: var(--danger);
+}
 .batch-source-wrap textarea {
   width: 100%;
   min-height: 164px;
@@ -1518,8 +1543,7 @@ button:disabled {
   justify-content: space-between;
   gap: 14px;
 }
-.batch-submit-row > span,
-.batch-file-note {
+.batch-submit-row > span {
   color: var(--text-muted);
   font-size: var(--text-xs);
 }
@@ -3643,25 +3667,6 @@ span.task-exec-cover {
   justify-items: end;
   gap: 6px;
 }
-/* 用不了的 AI 驱动：下拉里它们是 disabled、选不中，所以原因得单独列出来 */
-.ai-unavailable {
-  display: grid;
-  gap: 5px;
-  padding: 13px 0 2px;
-  border-top: 1px solid var(--border);
-}
-.ai-unavailable strong {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-}
-.ai-unavailable small {
-  color: var(--warning);
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
-}
-.ai-unavailable small b {
-  font-weight: var(--weight-medium);
-}
 .field-error {
   display: flex;
   align-items: center;
@@ -4005,23 +4010,168 @@ select {
   font-weight: var(--weight-medium);
   letter-spacing: 0.04em;
 }
-.media-player {
+/* 原始音轨播放器：整块轨道都是可点击/拖动的命中区，不用去够那条细进度线 */
+.audio-track-player {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.audio-track-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.audio-play {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.audio-play:hover {
+  background: var(--primary-hover);
+}
+.audio-play:active {
+  transform: scale(0.94);
+}
+.audio-play:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.audio-time {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.audio-time b {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+.audio-download {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.audio-download:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.audio-track {
+  position: relative;
+  height: 64px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+.audio-track:focus-visible {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+.audio-track canvas {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  height: 36px;
+  height: 100%;
+  pointer-events: none;
+}
+/* 波形还没解出来（读取中 / 过长）时，至少有一条轨道线，进度照常可拖 */
+.audio-track-flat {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  left: 10px;
+  height: 1px;
+  background: var(--border-strong);
+  pointer-events: none;
+}
+/* 已播部分叠主色、未播部分压一层底色：两者叠加后「播到哪」一眼可见 */
+.audio-track-played {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  pointer-events: none;
+}
+.audio-track-rest {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  pointer-events: none;
+}
+.audio-track-cursor {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  z-index: 2;
+  width: 2px;
+  transform: translateX(-1px);
+  border-radius: 1px;
+  background: var(--primary);
+  pointer-events: none;
+}
+.audio-track-cursor::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translateX(-50%);
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--primary);
+}
+.audio-element {
+  display: none;
 }
 /* 未保留音轨时编辑页不再渲染媒体区块，因此这里只有播放器相关样式 */
 .source-details {
   margin-top: 28px;
 }
-.source-details > span,
-.inspector-block > span {
-  display: block;
+/* 「来源」标签与平台徽标同一行：平台是来源的属性，放在这里比塞进下面的
+   作者/时长网格更直接，也不会让两列卡片多出一格落单 */
+.source-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 10px;
+}
+.source-heading > span,
+.inspector-block > span {
   color: var(--text-muted);
   font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
   letter-spacing: 0.04em;
+}
+.inspector-block > span {
+  display: block;
+  margin-bottom: 10px;
 }
 /* 来源链接要能看全：分享地址（尤其带 token 的小红书链接）不做行数截断，直接换行展开 */
 .source-details > a {
@@ -4255,6 +4405,123 @@ select {
   color: var(--text-muted);
   font-size: var(--text-xs);
 }
+/* 时间轴与全文一致：固定高度的框内滚动，长文案不会把整页撑长。
+   框本身留出左内边距，让时间码与轴线和边缘有呼吸；右侧给「恢复原文」留位置。 */
+.segment-panel {
+  max-width: 768px;
+  height: 62vh;
+  margin: 0 auto;
+  padding: 6px 18px 12px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-gutter: stable;
+}
+.segment-panel::-webkit-scrollbar {
+  width: 10px;
+}
+.segment-panel::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  background-clip: content-box;
+}
+.segment-panel::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  background-clip: content-box;
+}
+/* ---------- 文案阅读 / 编辑合并弹窗 ---------- */
+/* 弹窗直接框住整个编辑器：列表页留在后面不卸载，关掉就回到原来的位置。
+   高度贴着遮罩的内边距走；时间轴模式也改用弹窗里的高度，不再按 100vh 算。 */
+.modal-dialog.document-overlay {
+  position: relative;
+  width: min(1440px, 100%);
+  height: min(1040px, calc(100vh - 2 * var(--overlay-padding)));
+  max-height: none;
+}
+.modal-dialog.document-overlay .editor-page,
+.modal-dialog.document-overlay .editor-page.timeline-mode {
+  height: 100%;
+  min-height: 0;
+}
+/* 编辑器里的临时反馈条原来贴着视口；在弹窗里改成贴着弹窗顶部 */
+.document-overlay .editor-feedback {
+  position: absolute;
+  top: 84px;
+  right: 18px;
+}
+/* 加载 / 失败态也按弹窗高度来，别沿用整页的 100vh */
+.document-overlay .loading-page {
+  height: 100%;
+  min-height: 0;
+}
+.document-overlay .editor-load-error {
+  padding: 28px 24px;
+}
+
+/* 窄屏没有余地留遮罩边距：编辑器直接铺满 */
+@media (max-width: 760px) {
+  .modal-overlay:has(.document-overlay) {
+    padding: 0;
+  }
+  .modal-dialog.document-overlay {
+    width: 100vw;
+    height: 100vh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  /* 窄屏整页编辑器会把每个动作排成整行；弹窗里改成一行，
+     否则标题下面先被「阅读」「AI 总结」占掉两百多像素 */
+  .document-overlay .editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .document-overlay .editor-actions > * {
+    flex: 0 1 auto;
+  }
+  .document-overlay .editor-actions .secondary-button {
+    min-height: 44px;
+    padding-inline: 12px;
+  }
+}
+
+/* 时间轴模式在宽屏上占满编辑区剩余高度：标题与操作行固定，只有时间轴框滚动，
+   不必先滚动整个页面才能继续往下看。
+   窄屏的编辑区没有确定高度，仍沿用上面的 62vh 固定框，避免把内容裁掉。 */
+@media (min-width: 761px) {
+  /* 编辑页原本只有 min-height：内容多高页面就多高，flex 也拿不到可分配的高度。
+     时间轴模式把整页锁在视口内，标题固定、时间轴框自己滚。 */
+  .editor-page.timeline-mode {
+    height: 100vh;
+    overflow: hidden;
+  }
+  .transcript-editor.timeline-mode {
+    display: flex;
+    flex-direction: column;
+    overflow-y: hidden;
+    padding-bottom: 24px;
+  }
+  .transcript-editor.timeline-mode .transcript-heading,
+  .transcript-editor.timeline-mode .transcript-actions {
+    flex: 0 0 auto;
+    /* 列向 flex 里 auto 外边距会让这两行按内容宽度收缩再居中，
+       结果比下面的时间轴框窄一截、看起来是居中缩着的；
+       显式撑满（再由 max-width: 768px 截住）才和全文模式一样左对齐 */
+    width: 100%;
+  }
+  .transcript-editor.timeline-mode .segment-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+}
 /* 时间轴视图：左侧时间码、中间编号节点、右侧文本，一条竖向轴线串起全部分段。 */
 .segment-list {
   /* 时间轴几何：改这里就能整体挪动时间码、节点与轴线，不用逐个改偏移 */
@@ -4266,8 +4533,6 @@ select {
   --timeline-axis: calc(var(--timeline-tc) + var(--timeline-gap) + var(--timeline-node) / 2);
   /* 轴线起点＝行内边距 + 节点偏移 + 节点半径，首尾两行的轴线据此裁齐到节点 */
   --timeline-axis-start: calc(var(--timeline-row-top) + var(--timeline-node-offset) + var(--timeline-node) / 2);
-  max-width: 768px;
-  margin: 0 auto;
 }
 .segment-row {
   position: relative;
@@ -5374,7 +5639,8 @@ button.timecode:hover:not(:disabled) {
     top: 12px;
     right: 12px;
   }
-  .editor-actions .secondary-button:first-child {
+  /* 窄屏只藏「复制全文」；弹窗里的「阅读」切换要留着 */
+  .editor-actions .editor-copy-button {
     display: none;
   }
   .editor-workspace {
@@ -5391,6 +5657,10 @@ button.timecode:hover:not(:disabled) {
     min-height: 44px;
   }
   /* 窄屏把时间码放在正文上方，避免左侧轨道持续挤压编辑区域。 */
+  .segment-panel {
+    height: 64vh;
+    padding: 2px 12px 8px 6px;
+  }
   .segment-list {
     max-width: none;
   }

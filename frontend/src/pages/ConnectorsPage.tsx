@@ -176,10 +176,10 @@ export function ConnectorsPage() {
       setCredentials((current) => ({ ...current, [platform]: saved }))
       setEditing('')
       setDraft('')
-      setNotice(`已保存 ${saved.entries} 条 Cookie。`)
+      setNotice(`已保存 ${saved.entries} 条访问凭据。`)
       refresh()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存 Cookie 失败')
+      setError(reason instanceof Error ? reason.message : '保存访问凭据失败')
     } finally {
       setBusy('')
     }
@@ -287,7 +287,7 @@ export function ConnectorsPage() {
 
                     {cookiePlatform && !running && editing === connector.id && (
                       <div className="cookie-editor">
-                        <label className="sr-only" htmlFor={`cookie-${connector.id}`}>Cookie 内容</label>
+                        <label className="sr-only" htmlFor={`cookie-${connector.id}`}>访问凭据（Cookie）内容</label>
                         <textarea
                           id={`cookie-${connector.id}`}
                           value={draft}
@@ -309,7 +309,7 @@ export function ConnectorsPage() {
                             onClick={() => void saveCookie(connector.id)}
                           >
                             {working ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}
-                            保存 Cookie
+                            保存访问凭据
                           </button>
                           <button
                             className="secondary-button"
@@ -330,13 +330,13 @@ export function ConnectorsPage() {
                           </span>
                           <div className="cookie-actions">
                             <button
-                              className="primary-button"
+                              className={credential?.configured ? 'secondary-button' : 'primary-button'}
                               type="button"
                               disabled={working}
                               onClick={() => void startBrowserLogin(connector.id, 'guest')}
                             >
                               {working ? <LoaderCircle className="spin" size={15} /> : <KeyRound size={15} />}
-                              {credential?.configured ? '重新获取' : '一键获取访问权限'}
+                              {credential?.configured ? '重新获取访问权限' : '一键获取访问权限'}
                             </button>
                           </div>
                         </div>
@@ -360,7 +360,7 @@ export function ConnectorsPage() {
                               onClick={() => { setEditing(connector.id); setDraft(''); setNotice('') }}
                             >
                               <ClipboardPaste size={14} />
-                              手动粘贴 Cookie
+                              手动粘贴访问凭据
                             </button>
                             {credential?.configured && (
                               <button

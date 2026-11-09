@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 /**
  * 列表页的滚动位置：按 location（路径 + 查询串）分别记在 sessionStorage 里。
  *
- * 「点行进预览、再进编辑、回来重新找位置」这一步的主要代价就在这里：改完一个字
+ * 「点行进弹窗、关掉回来」这一步的主要代价就在这里：改完一个字
  * 回到列表却被弹回页首，之前滚到第几行、翻了哪几页全得重来。
  */
 

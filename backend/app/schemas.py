@@ -442,3 +442,34 @@ class ModelCatalogRead(BaseModel):
     engines: list[EngineStatusRead]
     models: list[ModelStatusRead]
     active_tasks: list[InstallProgressRead]
+
+
+class SkillFileRead(BaseModel):
+    """技能包里的一个可预览文本文件。"""
+
+    path: str
+    size: int
+    kind: Literal["markdown", "python", "json", "text"]
+
+
+class SkillRead(BaseModel):
+    """可下载的独立技能包；`download_url` 直接给浏览器当下载地址用。"""
+
+    id: str
+    title: str
+    description: str
+    version: str | None
+    files: list[SkillFileRead]
+    total_bytes: int
+    updated_at: float | None
+    download_url: str
+
+
+class SkillListRead(BaseModel):
+    items: list[SkillRead]
+
+
+class SkillFileContentRead(BaseModel):
+    path: str
+    content: str
+    truncated: bool

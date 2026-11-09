@@ -1,8 +1,8 @@
-import { ArrowDown, Download, FileText, Pencil, Search, Trash2, Users, X } from 'lucide-react'
+import { ArrowDown, Download, FileText, Search, Trash2, Users, X } from 'lucide-react'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 
-import { DocumentOverlay, type OverlayMode } from '../components/DocumentOverlay'
+import { DocumentOverlay } from '../components/DocumentOverlay'
 import { EmptyState } from '../components/EmptyState'
 import { LoadingState } from '../components/LoadingState'
 import { LoadMore } from '../components/LoadMore'
@@ -18,6 +18,19 @@ function dateLabel(value: string) {
   return new Intl.DateTimeFormat('zh-CN', {
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date(value))
+}
+
+/**
+ * 本地导入的文件可能没有可读标题，后端会退回一串哈希。
+ * 列表里显示成人能认的「本地文件 + 日期」，完整值仍留在悬停提示里。
+ */
+function displayTitle(document: DocumentSummary) {
+  const title = document.title.trim()
+  if (!title) return '未命名文案'
+  if (/^[0-9a-f]{12,}$/i.test(title) || /^[0-9a-f]{8}-[0-9a-f-]{20,}$/i.test(title)) {
+    return `本地文件 · ${dateLabel(document.updated_at)}`
+  }
+  return title
 }
 
 /** 每页条数：和表格一屏能看下的量对齐，翻页时不会一次性渲染太多行。 */
@@ -65,9 +78,10 @@ export function LibraryPage() {
   // 编辑完回来刷新同一份列表时，勾选应当保留
   const selectionKeyRef = useRef('')
   const [loadingMore, setLoadingMore] = useState(false)
-  // 点行先弹窗预览，要改内容就在同一个弹窗里切到编辑；列表始终留在弹窗后面
-  const [overlay, setOverlay] = useState<{ id: string; mode: OverlayMode } | null>(null)
-  // 编辑过之后刷新当前列表，让标题/字数跟上（浏览态关闭不刷新，避免白丢勾选）
+  // 点行打开编辑弹窗，列表始终留在弹窗后面
+  const [overlay, setOverlay] = useState<{ id: string } | null>(null)
+  // 编辑过之后刷新当前列表，让标题/字数跟上；只打开看一眼再关掉不重拉，
+  // 否则列表会重新渲染一遍，滚到下面的位置看起来像被刷新了一下
   const [reloadToken, setReloadToken] = useState(0)
   // 正在删除的文案：按钮禁用，避免重复点击
   const [removingId, setRemovingId] = useState('')
@@ -98,14 +112,6 @@ export function LibraryPage() {
     }
     setError('')
     setSearchParams(next, { replace: true })
-  }
-
-  /**
-   * 「编辑」入口：在同一个弹窗里直接开编辑态。点整行仍然是「预览」——那是看内容最短的一条路，
-   * 但改一个字不该先开预览再点「编辑正文」。
-   */
-  function openEditor(id: string) {
-    setOverlay({ id, mode: 'edit' })
   }
 
   // 地址上的 q 被外部改动时（例如点侧栏「文案库」清掉筛选），输入框要跟着回到新值
@@ -215,7 +221,7 @@ export function LibraryPage() {
 
   /**
    * 批量导出：勾了就只导勾选的，一篇没勾就导当前筛选的全部。
-   * 交给浏览器直接下载（与预览弹窗里的单篇导出同一套做法）。
+   * 交给浏览器直接下载（与编辑页的单篇导出同一套做法）。
    */
   function exportBundle() {
     const anchor = window.document.createElement('a')
@@ -271,7 +277,7 @@ export function LibraryPage() {
       <header className="page-header">
         <div><h1>文案库</h1><p>提取过的文案都会保存在这里。</p></div>
       </header>
-      <div className="toolbar">
+      <div className="toolbar library-toolbar">
         <label className="search-box">
           <Search size={17} />
           <span className="sr-only">搜索文案标题、正文、作者或作品介绍</span>
@@ -335,7 +341,7 @@ export function LibraryPage() {
         </div>
       </div>
       {error && <p className="form-message error" role="alert">{error}</p>}
-      <section className="panel library-panel">
+      <section className="panel library-panel" aria-label="文案列表">
         {loading ? (
           <LoadingState label="正在读取文案…" rows={5} />
         ) : documents.length === 0 ? (
@@ -346,9 +352,9 @@ export function LibraryPage() {
             action={!query && !uploader && platformFilter === 'all' ? <Link className="primary-button inline" to="/">开始提取</Link> : undefined}
           />
         ) : <>
-          <div className="library-table" role="table" aria-label="文案列表">
-            <div className="library-head" role="row">
-              <span className="pick-cell" role="columnheader">
+          <div className="library-table">
+            <div className="library-head">
+              <span className="pick-cell">
                 <input
                   type="checkbox"
                   aria-label={`全选当前已加载的 ${documents.length} 篇`}
@@ -361,63 +367,64 @@ export function LibraryPage() {
                   onChange={(event) => setSelected(event.target.checked ? new Set(documents.map((item) => item.id)) : new Set())}
                 />
               </span>
-              <span role="columnheader">标题</span>
+              <span>标题</span>
               {/* 「来源」与「平台」原来是两列，每列只放一个小标签，合成一列后
                   表格最低宽度少 110px，1200px 档的屏幕不用再横向滚动 */}
-              <span role="columnheader">来源</span>
-              <span role="columnheader">作者</span>
+              <span>来源</span>
+              <span>作者</span>
               {/* 列头就近点就能排序，不用再把手移到右上角的下拉里 */}
-              <span role="columnheader" aria-sort={sort === 'words' ? 'descending' : 'none'}>
+              <span>
                 <button
                   className={sort === 'words' ? 'sort-button active' : 'sort-button'}
                   type="button"
                   title="按字数从多到少排列"
+                  aria-label="按字数从多到少排列"
                   onClick={() => applySort('words')}
                 >
                   字数 {sort === 'words' && <ArrowDown size={12} aria-hidden="true" />}
                 </button>
               </span>
-              <span role="columnheader" aria-sort={sort === 'updated' ? 'descending' : 'none'}>
+              <span>
                 <button
                   className={sort === 'updated' ? 'sort-button active' : 'sort-button'}
                   type="button"
                   title="按最近更新排列"
+                  aria-label="按最近更新排列"
                   onClick={() => applySort('updated')}
                 >
                   最近更新 {sort === 'updated' && <ArrowDown size={12} aria-hidden="true" />}
                 </button>
               </span>
-              <span className="sr-only" role="columnheader">操作</span>
+              <span className="sr-only">操作</span>
             </div>
             {documents.map((document) => (
-              // 整行仍然指向编辑页（中键/新标签页打开走的就是它），但左键先开预览——
-              // 「看内容」比「改内容」更常发生；要直接改的是行尾的「编辑」按钮。
+              // 整行仍然指向编辑页（中键/新标签页打开走的就是它），左键则直接在弹窗里编辑。
               // 落点都带上当前筛选（listHref），返回时还是同一个列表视图。
               <Link
                 className={selected.has(document.id) ? 'library-row selected' : 'library-row'}
                 to={`/documents/${document.id}`}
                 state={{ from: listHref, label: '文案库' }}
                 key={document.id}
-                role="row"
-                onClick={(event) => { event.preventDefault(); setOverlay({ id: document.id, mode: 'read' }) }}
+                aria-label={`打开《${displayTitle(document)}》，${platformLabels[document.platform] ?? document.platform}，${document.word_count} 字`}
+                onClick={(event) => { event.preventDefault(); setOverlay({ id: document.id }) }}
               >
-                {/* 整行是链接，勾选框要把点击拦住，否则点勾选会顺带打开预览 */}
-                <span className="pick-cell" role="cell">
+                {/* 整行是链接，勾选框要把点击拦住，否则点勾选会顺带打开编辑器 */}
+                <span className="pick-cell">
                   <input
                     type="checkbox"
-                    aria-label={`选择《${document.title}》`}
+                    aria-label={`选择《${displayTitle(document)}》`}
                     checked={selected.has(document.id)}
                     onClick={(event) => event.stopPropagation()}
                     onChange={(event) => toggleSelected(document.id, event.target.checked)}
                   />
                 </span>
-                <span className="title-cell" role="cell">
+                <span className="title-cell">
                   <Thumb src={document.has_cover ? api.coverUrl(document.id) : null} />
-                  <strong title={document.title}>{document.title}</strong>
+                  <strong title={document.title}>{displayTitle(document)}</strong>
                 </span>
                 {/* 来源：平台徽标 + 单条/批量。批量用主色、单条弱化，
                     整页每行都挂标签才不会太吵 */}
-                <span className="source-cell" role="cell">
+                <span className="source-cell">
                   <PlatformBadge platform={document.platform} />
                   <span
                     className={`origin-badge ${document.source_kind}`}
@@ -427,7 +434,7 @@ export function LibraryPage() {
                   </span>
                 </span>
                 {/* 整行是链接，作者要拦下冒泡，否则点作者会先跳进编辑页 */}
-                <span className="author-cell" role="cell">
+                <span className="author-cell">
                   {document.uploader ? (
                     <button
                       className="author-link"
@@ -439,25 +446,16 @@ export function LibraryPage() {
                     </button>
                   ) : '—'}
                 </span>
-                <span className="word-cell" role="cell"><span className="mobile-only">字数 </span>{document.word_count}</span>
-                <span className="date-cell" role="cell">{dateLabel(document.updated_at)}</span>
-                {/* 整行是链接，行内按钮都要拦下冒泡，避免顺手把预览也打开 */}
-                <span className="row-actions" role="cell">
-                  <button
-                    className="icon-button"
-                    type="button"
-                    onClick={(event) => { event.preventDefault(); event.stopPropagation(); openEditor(document.id) }}
-                    aria-label={`编辑《${document.title}》`}
-                    title="编辑"
-                  >
-                    <Pencil size={15} />
-                  </button>
+                <span className="word-cell"><span className="mobile-only">字数 </span>{document.word_count}</span>
+                <span className="date-cell">{dateLabel(document.updated_at)}</span>
+                {/* 整行是链接，行内按钮都要拦下冒泡，避免顺手把编辑弹窗也打开 */}
+                <span className="row-actions">
                   <button
                     className="icon-button danger"
                     type="button"
-                    onClick={(event) => { event.preventDefault(); event.stopPropagation(); void remove(document.id, document.title) }}
+                    onClick={(event) => { event.preventDefault(); event.stopPropagation(); void remove(document.id, displayTitle(document)) }}
                     disabled={removingId === document.id}
-                    aria-label={`删除《${document.title}》`}
+                    aria-label={`删除《${displayTitle(document)}》`}
                     title="删除"
                   >
                     <Trash2 size={15} />
@@ -520,10 +518,9 @@ export function LibraryPage() {
         <DocumentOverlay
           key={overlay.id}
           documentId={overlay.id}
-          initialMode={overlay.mode}
-          onClose={(edited) => {
+          onClose={(changed) => {
             setOverlay(null)
-            if (edited) setReloadToken((token) => token + 1)
+            if (changed) setReloadToken((token) => token + 1)
           }}
         />
       )}

@@ -1,0 +1,12 @@
+{
+  "fallback_api_key": "",
+  "fallback_base_url": "https://api-new.ifphp.com",
+  "models_dir": "",
+  "ffmpeg_dir": "",
+  "output_dir": "",
+  "cookies": {
+    "bilibili": "",
+    "douyin": "",
+    "xiaohongshu": ""
+  }
+}

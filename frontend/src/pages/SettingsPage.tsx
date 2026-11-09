@@ -267,7 +267,7 @@ export function SettingsPage() {
         </section>
         <section className="settings-section panel">
           <div className="settings-heading"><span><CloudDownload size={19} /></span><div><h2>兜底解析</h2><p>本机解析失败时的备用通道。</p></div></div>
-          <div className="setting-row">
+          <div className="setting-row setting-row-wide">
             <span>
               <label htmlFor="fallback-api-key"><strong>兜底解析接口 API Key</strong></label>
               <small>自建解析和 yt-dlp 都拿不到视频时（多为平台风控），改用第三方聚合接口取无水印直链继续识别；视频号只能走这条通道，必须配置。还没有 Key 可以到 <a href="https://api-new.ifphp.com/" target="_blank" rel="noreferrer">api-new.ifphp.com</a> 注册账号获取；留空则只用本机解析，Key 加密保存在本机、不会回传到界面。</small>

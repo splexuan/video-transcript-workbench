@@ -40,6 +40,13 @@
 - 本机解析失败时可启用第三方兜底解析接口获取直链。
 - 文案可一键发送至 DeepSeek 网页进行 AI 总结，使用用户自己的账号完成，本机不保存第三方返回结果。
 
+**技能安装**
+
+- 把「视频文案提取」打包成独立 Agent 技能：可在页内查看说明、浏览源码并下载 ZIP。
+- 页面内提供可复制的安装提示词，发给本机 Agent 即可自动下载、解压、装依赖并自检。
+- 技能不依赖本程序运行，解压到 Agent 的技能目录并安装 Python 依赖即可使用。
+- 下载包只含源码与说明，不含本机的 `config.json`、API Key、模型与音视频。
+
 ## 界面预览
 
 > 截图中的文案标题、作者与合成文本已做打码处理。
@@ -264,6 +271,7 @@ VideoTranscriptWorkbench\
 | --- | --- |
 | `VTW_DATA_DIR` | 覆盖数据目录 |
 | `VTW_MODELS_DIR` | 覆盖模型目录，默认为 `<数据目录>\models` |
+| `VTW_SKILLS_DIR` | 覆盖技能包目录，默认为程序资源或仓库的 `skills\` |
 | `VTW_FALLBACK_API_BASE` | 覆盖兜底解析网关地址 |
 | `VTW_FFMPEG_DIR` | 指定 FFmpeg 所在目录 |
 | `VTW_WHISPER_COMPUTE_TYPE` | 精准识别计算精度，默认 `int8` |
@@ -289,6 +297,7 @@ VideoTranscriptWorkbench\
 | `/api/models` | 模型下载、校验与删除 |
 | `/api/credentials` | 平台凭据与浏览器登录 |
 | `/api/connectors` | 平台连接状态 |
+| `/api/skills` | 独立技能包列表、文件预览与 ZIP 下载 |
 | `/api/settings` | 应用设置 |
 | `/api/health` | 健康检查 |
 
@@ -313,6 +322,8 @@ creator-studio\
 │       ├── components\         通用组件
 │       ├── pages\              页面
 │       └── lib\                API 客户端与工具
+├── skills\                     可分发的独立 Agent 技能
+│   └── video-transcript\       视频文案提取技能（自带脚本与说明）
 ├── build.bat                   构建与打包脚本
 ├── setup.bat                   开发环境准备
 ├── start.bat                   本地启动

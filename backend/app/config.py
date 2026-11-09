@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     upload_max_mb: int = 4096
     # 模型安装目录。留空时使用 data_dir/models。
     models_dir: Path | None = None
+    # 随应用分发的独立技能目录。留空时按仓库 / 打包资源目录自动查找。
+    skills_dir: Path | None = None
     download_retries: int = 3
     download_timeout_seconds: float = 60.0
     # 精准识别（faster-whisper）运行参数：只在 CPU 上推理，不依赖 CUDA / cuDNN。

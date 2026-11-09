@@ -1,9 +1,9 @@
-import { ArrowRight, CircleCheck, Eye, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert, X } from 'lucide-react'
+import { ArrowRight, CircleCheck, FileUp, Link2, ListPlus, LoaderCircle, ShieldCheck, Sparkles, TriangleAlert, X } from 'lucide-react'
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { BatchExecution } from '../components/BatchExecution'
-import { DocumentOverlay, type OverlayMode } from '../components/DocumentOverlay'
+import { DocumentOverlay } from '../components/DocumentOverlay'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { TaskExecution } from '../components/TaskExecution'
 import { Thumb } from '../components/Thumb'
@@ -88,8 +88,8 @@ export function WorkbenchPage() {
   const [recentDocuments, setRecentDocuments] = useState<DocumentSummary[]>([])
   // 任务行、批次行要显示的标题：只按当前涉及的 document_id 查
   const [titles, setTitles] = useState<DocumentTitle[]>([])
-  // 最近文案 / 任务结果点击 → 文案弹窗（阅读或编辑）
-  const [docOverlay, setDocOverlay] = useState<{ id: string; mode: OverlayMode } | null>(null)
+  // 最近文案 / 任务结果点击 → 直接打开文案编辑弹窗
+  const [docOverlay, setDocOverlay] = useState<{ id: string } | null>(null)
   // 本次会话刚提交的任务：刷新页面后清空，任务执行面板不会回显历史任务
   const [focusedJobId, setFocusedJobId] = useState('')
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
@@ -807,13 +807,13 @@ export function WorkbenchPage() {
               <BatchExecution
                 batch={batchDetail}
                 titles={titles}
-                onOpenDocument={(id) => setDocOverlay({ id, mode: 'read' })}
+                onOpenDocument={(id) => setDocOverlay({ id })}
               />
             ) : current ? (
               <TaskExecution
                 job={current}
                 title={jobDisplayTitle(current, titles)}
-                onOpenDocument={(id) => setDocOverlay({ id, mode: 'read' })}
+                onOpenDocument={(id) => setDocOverlay({ id })}
                 onRetry={retryJob}
               />
             ) : (
@@ -834,12 +834,10 @@ export function WorkbenchPage() {
             ) : (
               <div className="document-list">
                 {recentDocuments.map((document) => (
-                  // 行本身不再是整块链接：里面既有「看」又有「改」两个动作，
-                  // 把按钮塞进 <a> 里是非法嵌套，键盘与读屏都会读到矛盾的角色
+                  // 整行打开文案编辑器；标题保留成链接，Ctrl / Cmd / Shift+点击仍可开整页
                   <div className="document-row" key={document.id}>
                     <Thumb src={document.has_cover ? api.coverUrl(document.id) : null} />
                     <span className="document-info">
-                      {/* 标题是进编辑页的正路；要看内容不必跳页，用行尾的「预览」 */}
                       <strong title={document.title}>
                         <Link
                           className="document-title"
@@ -849,7 +847,7 @@ export function WorkbenchPage() {
                             // 左键在弹窗里改；Ctrl / Cmd / Shift+点击仍可开整页
                             if (event.metaKey || event.ctrlKey || event.shiftKey) return
                             event.preventDefault()
-                            setDocOverlay({ id: document.id, mode: 'edit' })
+                            setDocOverlay({ id: document.id })
                           }}
                         >
                           {document.title}
@@ -859,8 +857,8 @@ export function WorkbenchPage() {
                     </span>
                     <PlatformBadge platform={document.platform} />
                     <span className="document-actions">
-                      <button type="button" onClick={() => setDocOverlay({ id: document.id, mode: 'read' })}>
-                        <Eye size={14} /> 预览
+                      <button type="button" onClick={() => setDocOverlay({ id: document.id })}>
+                        编辑
                       </button>
                     </span>
                   </div>
@@ -887,7 +885,6 @@ export function WorkbenchPage() {
         <DocumentOverlay
           key={docOverlay.id}
           documentId={docOverlay.id}
-          initialMode={docOverlay.mode}
           // 右栏每 1.6 秒轮询一次，关掉弹窗后自然会刷新，不用额外触发
           onClose={() => setDocOverlay(null)}
         />

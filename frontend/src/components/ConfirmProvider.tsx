@@ -36,6 +36,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         <Modal
           role="alertdialog"
           size="sm"
+          layer="top"
           ariaLabel={options.title}
           onClose={() => settle(false)}
           className="confirm-dialog"

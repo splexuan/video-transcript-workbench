@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../lib/api'
 import { formatBytes } from '../lib/format'
+import { useConfirm } from '../lib/useConfirm'
 import type { AudioSelection, TtsVoice, TtsVoiceEditResult } from '../types'
 import { Modal, ModalHeader } from './Modal'
 import { ReferenceAudioEditor } from './ReferenceAudioEditor'
@@ -40,6 +41,7 @@ export function VoiceEditModal({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const objectUrl = useRef('')
+  const confirm = useConfirm()
 
   const source = file ? objectUrl.current : voice.audio_url
 
@@ -181,6 +183,13 @@ export function VoiceEditModal({
   }
 
   async function remove() {
+    const confirmed = await confirm({
+      title: `删除音色「${voice.name}」？`,
+      description: '这个音色的参考音频会一并删除；已经合成的音频不受影响，但以后需要重新克隆才能再使用它。',
+      confirmLabel: '删除音色',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     setBusy('remove')
     setError('')
     try {

@@ -1,8 +1,8 @@
-import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, ListTodo, LoaderCircle, Pause, Pencil, Play, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Ban, ChevronDown, ChevronRight, ChevronUp, Cpu, ListTodo, LoaderCircle, Pause, Play, RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
-import { DocumentOverlay, type OverlayMode } from '../components/DocumentOverlay'
+import { DocumentOverlay } from '../components/DocumentOverlay'
 import { DropdownMenu } from '../components/DropdownMenu'
 import { EmptyState } from '../components/EmptyState'
 import { LoadingState } from '../components/LoadingState'
@@ -84,8 +84,8 @@ export function JobsPage() {
   const [error, setError] = useState('')
   // 正在「加载更多」的列表（空串表示没有）
   const [loadingMore, setLoadingMore] = useState('')
-  // 「打开文案」先弹窗预览，要改就在同一个弹窗里切到编辑
-  const [overlay, setOverlay] = useState<{ id: string; mode: OverlayMode } | null>(null)
+  // 「打开文案」直接在弹窗里进入编辑，不必单独再点一次「编辑正文」
+  const [overlay, setOverlay] = useState<{ id: string } | null>(null)
   // 正在执行取消/删除/重试的任务：按钮禁用，避免重复点击
   const [busyId, setBusyId] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -411,7 +411,7 @@ export function JobsPage() {
                       const title = jobDisplayTitle(job, titles)
                       const progress = normalizedProgress(job)
                       const possiblyStalled = isPossiblyStalled(job)
-                      // 识别完、有文案的子任务整行可点，直接打开预览；还在跑或失败的行
+                      // 识别完、有文案的子任务整行可点，打开就是编辑态；还在跑或失败的行
                       // 不接受点击，免得点上去没反应、看起来像坏了
                       const documentId = job.status === 'completed' ? job.document_id : null
                       return (
@@ -420,15 +420,15 @@ export function JobsPage() {
                           key={job.id}
                           role={documentId ? 'button' : undefined}
                           tabIndex={documentId ? 0 : undefined}
-                          aria-label={documentId ? `打开文案《${title}》` : undefined}
-                          onClick={documentId ? () => setOverlay({ id: documentId, mode: 'read' }) : undefined}
+                          aria-label={documentId ? `编辑文案《${title}》` : undefined}
+                          onClick={documentId ? () => setOverlay({ id: documentId }) : undefined}
                           onKeyDown={
                             documentId
                               ? (event: ReactKeyboardEvent<HTMLDivElement>) => {
                                   // 空格在容器上默认是滚动页面，得自己拦下来
                                   if (event.key !== 'Enter' && event.key !== ' ') return
                                   event.preventDefault()
-                                  setOverlay({ id: documentId, mode: 'read' })
+                                  setOverlay({ id: documentId })
                                 }
                               : undefined
                           }
@@ -479,7 +479,7 @@ export function JobsPage() {
           const cancellable = job.status === 'queued' || job.status === 'running'
           // 失败或取消的任务给一键重试，省去回工作台重新粘贴链接
           const retryable = job.status === 'failed' || job.status === 'cancelled'
-          // 识别完、有文案的任务整行可点，直接打开预览；其余行不接受点击
+          // 识别完、有文案的任务整行可点，打开就是编辑态；其余行不接受点击
           const documentId = job.status === 'completed' ? job.document_id : null
           return (
             <article
@@ -487,15 +487,15 @@ export function JobsPage() {
               key={job.id}
               role={documentId ? 'button' : undefined}
               tabIndex={documentId ? 0 : undefined}
-              aria-label={documentId ? `打开文案《${title}》` : undefined}
-              onClick={documentId ? () => setOverlay({ id: documentId, mode: 'read' }) : undefined}
+              aria-label={documentId ? `编辑文案《${title}》` : undefined}
+              onClick={documentId ? () => setOverlay({ id: documentId }) : undefined}
               onKeyDown={
                 documentId
                   ? (event: ReactKeyboardEvent<HTMLElement>) => {
                       // 空格在容器上默认是滚动页面，得自己拦下来
                       if (event.key !== 'Enter' && event.key !== ' ') return
                       event.preventDefault()
-                      setOverlay({ id: documentId, mode: 'read' })
+                      setOverlay({ id: documentId })
                     }
                   : undefined
               }
@@ -535,20 +535,6 @@ export function JobsPage() {
                 </div>
                 <div className="job-card-actions">
                   {/* 卡片整行可点，行内按钮要把点击拦下来，别顺手把文案也打开了 */}
-                  {/* 已完成的卡片给一条直达编辑的路：整行点击只到预览，
-                      要改内容不必再进预览点一次「编辑正文」 */}
-                  {documentId && (
-                    <button
-                      className="text-button"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setOverlay({ id: documentId, mode: 'edit' })
-                      }}
-                    >
-                      <Pencil size={15} /> 编辑文案
-                    </button>
-                  )}
                   {retryable && (
                     <button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); void retry(job.id) }} disabled={busyId === job.id}><RotateCcw size={15} /> 重新提取</button>
                   )}
@@ -569,7 +555,6 @@ export function JobsPage() {
         <DocumentOverlay
           key={overlay.id}
           documentId={overlay.id}
-          initialMode={overlay.mode}
           // 任务列表每 2.5 秒轮询一次，关掉弹窗后自然会刷新，不用额外触发
           onClose={() => setOverlay(null)}
         />

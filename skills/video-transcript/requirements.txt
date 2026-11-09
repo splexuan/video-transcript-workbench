@@ -1,0 +1,8 @@
+# 独立技能运行依赖（Python 3.10+）
+# 安装：python -m pip install -r requirements.txt
+httpx>=0.27,<1
+# 平台解析经常随站点改版失效，保持较新版本；必要时 pip install -U yt-dlp
+yt-dlp>=2026.8.1
+numpy>=1.26
+sherpa-onnx>=1.10,<2
+opencc-python-reimplemented>=0.1.7,<1

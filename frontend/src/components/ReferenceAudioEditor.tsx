@@ -232,11 +232,14 @@ export function ReferenceAudioEditor({
     if (!src) {
       bufferRef.current = null
       peaksRef.current = null
-      setDuration(0)
-      return
+      // 不直接同步 setState：放到下一轮微任务，避免 effect 体内触发级联渲染
+      const reset = window.setTimeout(() => setDuration(0), 0)
+      return () => window.clearTimeout(reset)
     }
     let cancelled = false
-    setLoadError('')
+    // 同上：清空旧错误也放到微任务里，避免在 effect 体内同步 setState。
+    // 用微任务而不是定时器：它排在 fetch 的 rejection 之前，不会把刚写进去的错误又清掉。
+    queueMicrotask(() => setLoadError(''))
     const context = new AudioContext()
     fetch(src)
       .then((response) => {
@@ -348,7 +351,8 @@ export function ReferenceAudioEditor({
       onChange({ start: low, end: low + width })
     } else if (event.key === '[' || event.key === ']') {
       const edge = event.key === '[' ? value.start - step : value.end + step
-      event.key === '[' ? applyRange(edge, value.end) : applyRange(value.start, edge)
+      if (event.key === '[') applyRange(edge, value.end)
+      else applyRange(value.start, edge)
     } else {
       return
     }

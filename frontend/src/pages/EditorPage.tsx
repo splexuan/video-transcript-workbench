@@ -1,9 +1,10 @@
-import { ArrowLeft, Bot, BookOpen, Check, Copy, Film, Info, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Bot, Check, Copy, Download, Film, Info, RefreshCw, RotateCcw, Sparkles, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { LoadingState } from '../components/LoadingState'
 import { AudioTrackPlayer } from '../components/AudioTrackPlayer'
+import { Modal, ModalHeader } from '../components/Modal'
 import { PlatformBadge } from '../components/PlatformBadge'
 import { api } from '../lib/api'
 import { useAiSummary } from '../lib/ai'
@@ -46,8 +47,6 @@ type TextView = 'timeline' | 'plain'
 
 export interface DocumentEditorProps {
   documentId: string
-  /** 已有详情时直接渲染，省去打开弹窗时再拉一次 */
-  initialDocument?: DocumentDetail | null
   /** 整页模式下的返回落点；弹窗模式（传了 onClose）不用 */
   backTo?: string
   backLabel?: string
@@ -55,8 +54,8 @@ export interface DocumentEditorProps {
   onClose?: () => void
   /** 有未落盘的改动时为 true：弹窗据此决定关闭前要不要确认 */
   onDirtyChange?: (dirty: boolean) => void
-  /** 弹窗模式：保存后切回只读阅读态，并把刚保存的详情带过去，省一次闪烁 */
-  onSwitchToRead?: (document: DocumentDetail | null) => void
+  /** 任意一次内容落库后触发：列表据此只刷新真正改过的行，避免空手关闭也重拉一遍 */
+  onSaved?: () => void
 }
 
 /**
@@ -84,12 +83,11 @@ export function EditorPage() {
  */
 export function DocumentEditor({
   documentId,
-  initialDocument = null,
   backTo = '/library',
   backLabel = '文案库',
   onClose,
   onDirtyChange,
-  onSwitchToRead,
+  onSaved,
 }: DocumentEditorProps) {
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -97,7 +95,7 @@ export function DocumentEditor({
   const aiSummary = useAiSummary()
   // 窄屏下来源面板默认收起；宽屏时这个状态不起作用（面板常驻）
   const [sourceOpen, setSourceOpen] = useState(false)
-  const [document, setDocument] = useState<DocumentDetail | null>(initialDocument)
+  const [document, setDocument] = useState<DocumentDetail | null>(null)
   const [loadError, setLoadError] = useState('')
   // 加载失败后点「重试」递增，重新拉取文档
   const [reloadKey, setReloadKey] = useState(0)
@@ -106,6 +104,8 @@ export function DocumentEditor({
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(true)
   const [exporting, setExporting] = useState('')
+  // 窄屏把右栏藏起来后，导出与复制全文收进这个弹窗，别让核心产出随布局一起消失
+  const [exportOpen, setExportOpen] = useState(false)
   const [copiedSource, setCopiedSource] = useState(false)
   const [formatting, setFormatting] = useState(false)
   const [restoring, setRestoring] = useState(false)
@@ -121,7 +121,7 @@ export function DocumentEditor({
   const [wholeDraft, setWholeDraft] = useState<string | null>(null)
   const wordCount = useMemo(() => document?.segments.reduce((count, segment) => count + segment.text.trim().length, 0) ?? 0, [document])
   const description = useMemo(() => decodeEntities(document?.description ?? ''), [document?.description])
-  /** 整篇文本：与「复制全文」、导出、预览同一份（一行一句；整理过段落之间空行）。 */
+  /** 整篇文本：与「复制全文」、导出同一份（一行一句；整理过段落之间空行）。 */
   const wholeText = useMemo(
     () => (document ? transcriptAsText(document.segments, document.paragraph_body) : ''),
     [document],
@@ -135,14 +135,8 @@ export function DocumentEditor({
     currentTextRef.current = wholeDraft ?? wholeText
   }, [wholeDraft, wholeText])
 
-  // 初始详情只消费一次：弹窗把阅读态已经有的一份传进来，就不必再拉一次。
-  // 换文档或点重试时 seed 已经清空，照常请求。
-  const seedRef = useRef(initialDocument ? { id: documentId } : null)
+  // 打开弹窗或整页时都按 documentId 拉一次详情
   useEffect(() => {
-    if (seedRef.current?.id === documentId) {
-      seedRef.current = null
-      return
-    }
     let active = true
     api.document(documentId)
       .then((next) => {
@@ -164,6 +158,12 @@ export function DocumentEditor({
   useEffect(() => {
     dirtyNotify.current?.(!saved)
   }, [saved])
+
+  // 与 dirty 一样走 ref：保存回调每次渲染都是新函数，effect 不该跟着重装
+  const savedNotify = useRef(onSaved)
+  useEffect(() => {
+    savedNotify.current = onSaved
+  })
 
   useEffect(() => {
     if (saved) return
@@ -204,6 +204,7 @@ export function DocumentEditor({
     const merged = await persistBody(document, title, text)
     setDocument(merged)
     setSaved(currentTextRef.current === text)
+    savedNotify.current?.()
     return merged
   }
 
@@ -332,6 +333,7 @@ export function DocumentEditor({
       setDocument(result.document)
       setWholeDraft(null)
       setSaved(true)
+      savedNotify.current?.()
       const notes = [`已整理为 ${result.paragraphs} 个自然段、${result.sentences} 句`]
       if (result.merged > 0) notes.push(`合并了 ${result.merged} 条滚动重复内容`)
       if (!result.punctuated) notes.push('正文已带标点，未再补标点')
@@ -361,6 +363,7 @@ export function DocumentEditor({
       setDocument(updated)
       setWholeDraft(null)
       setSaved(true)
+      savedNotify.current?.()
       setActionMessage(`已恢复为 ${updated.segments.length} 行原始分段`)
     } catch (reason) {
       setActionError(reason instanceof Error ? reason.message : '恢复失败，请稍后重试')
@@ -454,21 +457,6 @@ export function DocumentEditor({
     setView(next)
   }
 
-  /** 弹窗模式：保存后回到只读预览；存不下来就留在编辑态让用户处理。 */
-  async function switchToRead() {
-    let latest = document
-    if (!saved) {
-      try {
-        latest = (await persistDocument()) ?? document
-      } catch (reason) {
-        setActionError(reason instanceof Error ? reason.message : '保存失败，请稍后重试')
-        return
-      }
-    }
-    setWholeDraft(null)
-    onSwitchToRead?.(latest)
-  }
-
   /**
    * 整页模式下带着未保存的改动离开时先问一句。改成自绘弹窗后不能再同步返回，
    * 所以先拦住默认跳转，等到用户确认了再自己 navigate 过去。
@@ -529,17 +517,6 @@ export function DocumentEditor({
         )}
         <div className="editor-title-group"><input aria-label="文案标题" title={document.title} value={document.title} onChange={(event) => { setDocument({ ...document, title: event.target.value }); setSaved(false) }} /></div>
         <div className="editor-actions">
-          {/* 弹窗里只读预览就在同一层：不需要关掉再重新打开 */}
-          {onSwitchToRead && (
-            <button
-              className="secondary-button editor-read-button"
-              type="button"
-              onClick={() => void switchToRead()}
-              title="保存并切回只读预览"
-            >
-              <BookOpen size={16} /> 阅读
-            </button>
-          )}
           {/* 只在窄屏出现：展开被折叠的来源信息（封面、作者、时长、音轨播放器） */}
           <button
             className="icon-button editor-source-toggle"
@@ -551,6 +528,14 @@ export function DocumentEditor({
             onClick={() => setSourceOpen((open) => !open)}
           >
             <Info size={18} />
+          </button>
+          <button
+            className="secondary-button editor-export-button"
+            type="button"
+            onClick={() => setExportOpen(true)}
+            title="导出 TXT、SRT、VTT、JSON，或复制全文"
+          >
+            <Download size={16} /> 导出
           </button>
           <button className="secondary-button editor-copy-button" type="button" onClick={() => void copyPlainText()}><Copy size={16} /> 复制全文</button>
           <button
@@ -569,6 +554,7 @@ export function DocumentEditor({
         <aside
           className={sourceOpen ? 'editor-source-panel open' : 'editor-source-panel'}
           id="editor-source"
+          aria-label="来源信息"
         >
           {/* 封面文件可能已被清理：加载失败直接收起，不留破图框 */}
           {document.has_cover && (
@@ -714,13 +700,58 @@ export function DocumentEditor({
             </div>
           )}
         </main>
-        <aside className="editor-inspector">
+        <aside className="editor-inspector" aria-label="文案信息">
           <h2>文案信息</h2>
           <div className="inspector-block"><span>原视频时长</span><strong>{duration(document.duration_seconds)}</strong><small>用于估算校对所需时间</small></div>
           <div className="inspector-block"><span>识别原文</span><strong>已保留</strong><small>导出 JSON 时会附带识别原文，方便对比改动前后</small></div>
           <div className="inspector-block"><span>导出格式</span><div className="format-chips">{(['txt', 'srt', 'vtt', 'json'] as const).map((format) => <button key={format} type="button" onClick={() => void download(format)} disabled={Boolean(exporting)}>{exporting === format ? '…' : format.toUpperCase()}</button>)}</div></div>
         </aside>
       </div>
+      {exportOpen && (
+        <Modal ariaLabel="导出与复制文案" size="sm" onClose={() => setExportOpen(false)}>
+          <ModalHeader
+            title="导出与复制"
+            icon={Download}
+            onClose={() => setExportOpen(false)}
+            closeLabel="关闭导出"
+          />
+          <div className="modal-body editor-export-modal">
+            <p>导出前会先保存当前修改，再下载到浏览器的下载目录。</p>
+            <div className="editor-export-grid">
+              {([
+                ['txt', '纯文本'],
+                ['srt', '字幕文件'],
+                ['vtt', '网页字幕'],
+                ['json', '时间码与识别原文'],
+              ] as const).map(([format, label]) => (
+                <button
+                  key={format}
+                  className="secondary-button"
+                  type="button"
+                  disabled={Boolean(exporting)}
+                  onClick={() => {
+                    setExportOpen(false)
+                    void download(format)
+                  }}
+                >
+                  <strong>{exporting === format ? '…' : format.toUpperCase()}</strong>
+                  <small>{label}</small>
+                </button>
+              ))}
+            </div>
+            <button
+              className="secondary-button editor-export-copy"
+              type="button"
+              onClick={() => {
+                setExportOpen(false)
+                void copyPlainText()
+              }}
+            >
+              <Copy size={16} /> 复制全文
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

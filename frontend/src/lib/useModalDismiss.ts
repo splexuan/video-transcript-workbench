@@ -1,6 +1,14 @@
 import { useEffect, useRef } from 'react'
 
 /**
+ * 当前打开的弹窗栈。只有最上面一层响应 Esc，也只有最后一层关闭时才解除滚动锁。
+ * 确认弹窗可能叠在编辑/选择弹窗之上，没有这个栈的话按一次 Esc 会把两层一起关掉。
+ */
+const openModals: symbol[] = []
+let locked = false
+let previousOverflow = ''
+
+/**
  * 弹窗的两件公共事务：Esc 关闭 + 弹窗期间锁住背景滚动。
  *
  * 锁滚动后滚动条会消失、视口宽出约 15px，背景页和居中的弹窗都会跟着平移一下，所以顺手量出
@@ -18,10 +26,17 @@ export function useModalDismiss(open: boolean, onDismiss: () => void) {
 
   useEffect(() => {
     if (!open) return
+    const id = Symbol('modal')
+    openModals.push(id)
+
     function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') dismiss.current()
+      // 只让最上层响应；下层弹窗的监听器仍然挂着，但不能跟着一起关
+      if (event.key === 'Escape' && openModals[openModals.length - 1] === id) {
+        dismiss.current()
+      }
     }
     window.addEventListener('keydown', onKey)
+
     const root = document.documentElement
     /*
      * 锁滚动会让滚动条消失、视口变宽，背景页和居中的弹窗都会平移一下，
@@ -31,14 +46,25 @@ export function useModalDismiss(open: boolean, onDismiss: () => void) {
      * 量出来就是 0，自然也不用补偿；浏览器若没兑现这个预留，量出来就是真实差值。
      * 读 clientWidth 会触发一次同步布局，但每个弹窗只发生一次，可以忽略。
      */
-    const widthBefore = root.clientWidth
-    document.body.style.overflow = 'hidden'
-    const shift = root.clientWidth - widthBefore
-    if (shift > 0) root.style.setProperty('--scroll-lock-gap', `${shift}px`)
+    if (!locked) {
+      previousOverflow = document.body.style.overflow
+      const widthBefore = root.clientWidth
+      document.body.style.overflow = 'hidden'
+      const shift = root.clientWidth - widthBefore
+      if (shift > 0) root.style.setProperty('--scroll-lock-gap', `${shift}px`)
+      locked = true
+    }
+
     return () => {
       window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
-      root.style.removeProperty('--scroll-lock-gap')
+      const index = openModals.lastIndexOf(id)
+      if (index >= 0) openModals.splice(index, 1)
+      // 叠层时先关上层：下层还开着就继续保持锁定
+      if (openModals.length === 0 && locked) {
+        document.body.style.overflow = previousOverflow
+        root.style.removeProperty('--scroll-lock-gap')
+        locked = false
+      }
     }
   }, [open])
 }

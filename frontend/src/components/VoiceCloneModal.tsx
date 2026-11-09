@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { api } from '../lib/api'
 import { formatBytes } from '../lib/format'
+import { useConfirm } from '../lib/useConfirm'
 import type { AudioSelection, TtsVoice } from '../types'
 import { Modal, ModalHeader } from './Modal'
 import { ReferenceAudioEditor } from './ReferenceAudioEditor'
@@ -60,6 +61,7 @@ export function VoiceCloneModal({
   const [notice, setNotice] = useState('')
   const objectUrl = useRef('')
   const probe = useRef<HTMLAudioElement>(null)
+  const confirm = useConfirm()
 
   const mine = voices.filter((item) => !item.builtin)
   /** 选区是否有效（波形还没解码完时是 0 秒，这时不能拿去裁剪）。 */
@@ -155,6 +157,13 @@ export function VoiceCloneModal({
   }
 
   async function removeVoice(item: TtsVoice) {
+    const confirmed = await confirm({
+      title: `删除音色「${item.name}」？`,
+      description: '参考音频会一并删除，无法恢复。已经合成的音频仍会保留。',
+      confirmLabel: '删除音色',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     setRemoving(item.id)
     setError('')
     setNotice('')

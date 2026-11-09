@@ -15,7 +15,7 @@ export interface AiSummaryTrigger {
 }
 
 /**
- * 编辑页与预览弹窗共用的入口：调用方只需要把 outcome 翻译成一句话。
+ * 编辑页（含弹窗）共用的入口：调用方只需要把 outcome 翻译成一句话。
  *
  * 注意开窗必须发生在用户点击的同步流程里，所以这里不能先 await 别的异步操作；
  * openDeepSeekSummary 自己也是先开窗、再复制。

@@ -18,6 +18,7 @@ import { AudioTrackPlayer } from '../components/AudioTrackPlayer'
 import { Modal, ModalHeader } from '../components/Modal'
 import { VoiceCloneModal } from '../components/VoiceCloneModal'
 import { api } from '../lib/api'
+import { useConfirm } from '../lib/useConfirm'
 import type { TtsConfig, TtsJob, TtsVoice } from '../types'
 
 const ACTIVE: TtsJob['status'][] = ['pending', 'running', 'cancelling']
@@ -55,6 +56,7 @@ const statusLabels: Record<TtsJob['status'], string> = {
 }
 
 export function TtsPage() {
+  const confirm = useConfirm()
   const [config, setConfig] = useState<TtsConfig | null>(null)
   const [configError, setConfigError] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
@@ -212,6 +214,13 @@ export function TtsPage() {
   }
 
   async function remove(item: TtsJob) {
+    const confirmed = await confirm({
+      title: '删除这条合成记录？',
+      description: '记录和对应的音频文件会一起删除，无法恢复。已经导出的音频不受影响。',
+      confirmLabel: '删除记录',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     try {
       await api.deleteTtsJob(item.id)
       if (job?.id === item.id) setJob(null)
@@ -223,6 +232,14 @@ export function TtsPage() {
 
   /** 清空已结束的记录（正在合成的那条留着）。 */
   async function clearHistory() {
+    const finished = history.filter((item) => !ACTIVE.includes(item.status)).length
+    const confirmed = await confirm({
+      title: finished > 0 ? `清空 ${finished} 条合成记录？` : '清空已结束的合成记录？',
+      description: '已结束的记录和音频文件会一起删除；正在合成的任务会保留。此操作无法恢复。',
+      confirmLabel: '清空记录',
+      tone: 'danger',
+    })
+    if (!confirmed) return
     setError('')
     try {
       const result = await api.clearTtsJobs()
@@ -539,7 +556,7 @@ export function TtsPage() {
           </section>
 
           <section className="panel">
-            <div className="section-heading">
+            <div className="section-heading tts-history-heading">
               <div>
                 <h2>合成记录</h2>
                 <p>共 {history.length} 条（最多保留 200 条，含音频文件）。点任意一条会把当时的文案、音色和语速填回左边，方便改完再来一遍。</p>

@@ -18,6 +18,8 @@ import type {
   Page,
   PolishedText,
   RecognitionModel,
+  Skill,
+  SkillFileContent,
   TtsConfig,
   TtsJob,
   TtsTranscribeResult,
@@ -297,4 +299,9 @@ export const api = {
     request<RecognitionModel>(`/api/models/${id}/verify`, { method: 'POST' }),
   deleteModel: (id: string) =>
     request<{ removed: boolean; model_id: string }>(`/api/models/${id}`, { method: 'DELETE' }),
+  /** 随应用分发的独立技能包：只读列表，不包含用户 config.json。 */
+  skills: () => request<{ items: Skill[] }>('/api/skills'),
+  skillFile: (id: string, path: string) =>
+    request<SkillFileContent>(`/api/skills/${encodeURIComponent(id)}/file${queryString({ path })}`),
+  skillDownloadUrl: (id: string) => `/api/skills/${encodeURIComponent(id)}/download`,
 }

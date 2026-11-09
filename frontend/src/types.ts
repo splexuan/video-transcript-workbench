@@ -373,3 +373,34 @@ export interface ModelCatalog {
   models: RecognitionModel[]
   active_tasks: InstallProgress[]
 }
+
+/* ---------- 独立技能包 ---------- */
+
+export type SkillFileKind = 'markdown' | 'python' | 'json' | 'text'
+
+export interface SkillFile {
+  path: string
+  size: number
+  kind: SkillFileKind
+}
+
+/** 随应用分发的独立技能：可预览源码与说明，也可整包下载。 */
+export interface Skill {
+  id: string
+  title: string
+  description: string
+  version: string | null
+  files: SkillFile[]
+  total_bytes: number
+  /** 文件最后修改时间（Unix 秒）；没有文件时为空。 */
+  updated_at: number | null
+  /** 后端给的下载地址，直接挂在 `<a download>` 上用。 */
+  download_url: string
+}
+
+export interface SkillFileContent {
+  path: string
+  content: string
+  /** 文件过大时只回传开头一段。 */
+  truncated: boolean
+}

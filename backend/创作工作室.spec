@@ -56,9 +56,58 @@ def collect_ffmpeg() -> list[tuple[str, str]]:
     return collected
 
 
+# 只打包技能源码与说明。config.json 里是用户真实密钥，vendor/output/__pycache__
+# 又是运行环境和产物，都不能跟着发行包走。规则与后端 skill_store.py 保持一致。
+SKILL_TEXT_SUFFIXES = {
+    ".md", ".txt", ".py", ".json", ".toml", ".yaml", ".yml",
+    ".cfg", ".ini", ".sh", ".ps1",
+}
+SKILL_EXCLUDED_DIRS = {
+    "__pycache__", ".git", ".idea", ".vscode", ".venv", "venv",
+    "vendor", "output", "models", "node_modules",
+}
+SKILL_EXCLUDED_FILES = {
+    "config.json", "cookies.txt", "cookie.txt", "secrets.json", "credentials.json",
+}
+
+
+def collect_skills() -> list[tuple[str, str]]:
+    """把 skills/<id>/ 的允许文件放进资源目录的 skills/<id>/。"""
+
+    root = ROOT / "skills"
+    if not root.is_dir():
+        print(f"[打包提示] 没找到 {root}：产物里不会带独立技能包。")
+        return []
+
+    collected: list[tuple[str, str]] = []
+    for skill_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        if not (skill_dir / "SKILL.md").is_file():
+            continue
+        count = 0
+        for path in sorted(skill_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(skill_dir)
+            if any(
+                part in SKILL_EXCLUDED_DIRS or part.startswith(".")
+                for part in relative.parts[:-1]
+            ):
+                continue
+            if path.name in SKILL_EXCLUDED_FILES or path.name.startswith("."):
+                continue
+            if path.suffix.lower() not in SKILL_TEXT_SUFFIXES:
+                continue
+            destination = Path("skills") / skill_dir.name / relative.parent
+            collected.append((str(path), str(destination)))
+            count += 1
+        print(f"[打包提示] 技能 {skill_dir.name}：打包 {count} 个文件（不含本机配置与 Cookie）")
+    return collected
+
+
 datas = [
     (str(ROOT / "frontend" / "dist"), "frontend_dist"),
 ]
+datas += collect_skills()
 if ICON.is_file():
     # 托盘图标要能被运行时读到，所以放进资源目录（不是只作为 exe 的文件图标）
     datas.append((str(ICON), "."))
@@ -128,6 +177,35 @@ a = Analysis(
         "nvidia_nccl_cu12",
         "torch",
         "tensorflow",
+        # 模型训练/转换工具链：ctranslate2 的 converters 和 transformers 会静态
+        # 引用它们（运行时都靠 try/except 或函数内延迟导入兜底）。不排除的话，
+        # 依赖图会一路扩到 torch/datasets，产物从约 450MB 涨到 3.7GB。
+        "torchvision",
+        "torchaudio",
+        "transformers",
+        "diffusers",
+        "accelerate",
+        "datasets",
+        "spacy",
+        "thinc",
+        "timm",
+        "librosa",
+        "pandas",
+        "pyarrow",
+        "numba",
+        "llvmlite",
+        "altair",
+        "openpyxl",
+        "pytest",
+        "paddle",
+        "paddleocr",
+        "cv2",
+        "sudachipy",
+        "sudachidict_core",
+        "fairseq",
+        "nltk",
+        "sklearn",
+        "scipy",
         # onnxruntime 只用于 faster-whisper 的 VAD 预处理（默认关闭），且在本机
         # 的 PyInstaller 子进程里导入即崩；代码已容错缺失，打包时整包剔除
         "onnxruntime",

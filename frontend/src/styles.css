@@ -38,18 +38,18 @@
   --platform-bilibili-bg: #fdeef3;
   --platform-douyin-fg: #4a4038;
   --platform-douyin-bg: #f1ece6;
-  --platform-kuaishou-fg: #b4531f;
+  --platform-kuaishou-fg: #a54b1a;
   --platform-kuaishou-bg: #fdf0e6;
   --platform-xiaohongshu-fg: #b52c36;
   --platform-xiaohongshu-bg: #fdeceb;
   --platform-wechat-fg: #3f6b4c;
   --platform-wechat-bg: #e9f2e9;
 
-  --success: #4a7c59;
+  --success: #3f6b4c;
   --success-soft: #e8f1e9;
   /* 警示色降一档饱和：原来的 #a9772a 配 #fbf0dc 只有 3.6:1，既刺眼又不够清楚；
-     前景加深、背景去掉那层黄之后约 4.3:1，一屏里也不再和黄底抢注意力 */
-  --warning: #96682a;
+     前景加深后配当前浅底约 5.4:1，一屏里也不再和黄底抢注意力 */
+  --warning: #855a22;
   --warning-soft: #f8f1e2;
   --danger: #b3453c;
   --danger-soft: #fbeae7;
@@ -175,7 +175,9 @@
   --sidebar: #1e1a15;
   --text: #f4efe8;
   --text-secondary: #c3b8aa;
-  --text-muted: #94887a;
+  /* 暗色下的次要文字提亮一档：12px 小字落在 surface-subtle 上时，
+     原来的 #94887a 只有约 4.3:1，达不到 4.5:1 */
+  --text-muted: #a39687;
   --border: #38322a;
   --border-strong: #4a4136;
 
@@ -464,7 +466,7 @@ button:disabled {
   background: var(--surface-hover);
 }
 
-/* ---------- 文案预览弹窗 ---------- */
+/* ---------- 弹窗 ---------- */
 
 .modal-overlay {
   position: fixed;
@@ -520,7 +522,7 @@ button:disabled {
   opacity: 0;
   transform: translateY(-12px);
 }
-/* 作者选择弹窗比文案预览窄：里面是一格格等宽卡片，太宽一行会被拉得不好扫 */
+/* 作者选择弹窗比文案弹窗窄：里面是一格格等宽卡片，太宽一行会被拉得不好扫 */
 .modal-dialog.author-picker {
   width: min(680px, 100%);
 }
@@ -544,20 +546,6 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.modal-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  padding: 8px 22px 0;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-}
-.modal-meta a {
-  color: var(--primary);
-}
-.modal-meta a:hover {
-  text-decoration: underline;
-}
 .modal-body {
   flex: 1;
   margin-top: 14px;
@@ -565,15 +553,11 @@ button:disabled {
   border-top: 1px solid var(--border);
   overflow-y: auto;
 }
-/* 预览按字幕原样一句一行；要改写法去编辑页 */
 .modal-body p {
   margin: 0 0 10px;
   color: var(--text);
   font-size: var(--text-md);
   line-height: var(--leading-relaxed);
-}
-.modal-error {
-  margin: 14px 22px 0;
 }
 .modal-foot {
   display: flex;
@@ -588,27 +572,12 @@ button:disabled {
   align-items: center;
   gap: 5px;
 }
-/* 「打开编辑」推到最右，预览动作留左边 */
+/* 底栏的主操作（保存、下载）推到最右，其余动作留左边 */
 .modal-foot .primary-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-left: auto;
-}
-/* 弹窗底栏的导出：四种格式一行排开（编辑页右栏是 2×2 网格） */
-.modal-export {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-muted);
-}
-.modal-export .format-chips {
-  display: flex;
-  gap: 6px;
-}
-.modal-export .format-chips button {
-  min-height: 30px;
-  padding: 0 10px;
 }
 
 /* ---------- 语音合成 ---------- */
@@ -682,6 +651,7 @@ button:disabled {
 }
 .tts-control input[type='range'] {
   width: 100%;
+  accent-color: var(--primary);
 }
 .tts-actions {
   display: flex;
@@ -2387,6 +2357,15 @@ span.task-exec-cover {
   gap: 12px;
   margin-bottom: 18px;
 }
+/* 列表变长后搜索和筛选不该被滚出视野；吸顶时用页面底色挡住下面的行 */
+.library-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-block: 12px 14px;
+  margin-block: -12px 4px;
+  background: var(--bg);
+}
 .search-box {
   display: flex;
   align-items: center;
@@ -2460,7 +2439,7 @@ span.task-exec-cover {
 .library-row .icon-button {
   width: 32px;
   height: 32px;
-  opacity: 0.45;
+  opacity: 0.65;
 }
 .library-row:hover .icon-button,
 .library-row .icon-button:focus-visible {
@@ -2821,7 +2800,7 @@ span.task-exec-cover {
   background: var(--surface);
   font-size: var(--text-xs);
 }
-/* 识别完的子任务整行可点（直接打开预览）：给出可点的反馈，键盘也能聚焦到 */
+/* 识别完的子任务整行可点（直接打开编辑器）：给出可点的反馈，键盘也能聚焦到 */
 .batch-child-row.clickable {
   cursor: pointer;
   transition: background-color var(--ease);
@@ -2939,7 +2918,7 @@ span.task-exec-cover {
   background: var(--surface-hover);
   box-shadow: inset 3px 0 0 var(--border-strong);
 }
-/* 识别完的任务整行可点（直接打开预览），键盘也能聚焦到；悬停反馈上面这条已有 */
+/* 识别完的任务整行可点（直接打开编辑器），键盘也能聚焦到；悬停反馈上面这条已有 */
 .job-card.clickable {
   cursor: pointer;
 }
@@ -3638,6 +3617,19 @@ span.task-exec-cover {
   min-height: 74px;
   border-top: 1px solid var(--border);
 }
+/* 两列布局里「兜底解析」的说明很长、控件也宽：只让这一行换行，
+   其它设置项保持原来的「说明 + 控件」并排，避免整页被撑高。 */
+.setting-row-wide {
+  flex-wrap: wrap;
+  row-gap: 12px;
+}
+.setting-row-wide > span:first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.setting-row-wide > .setting-control {
+  margin-left: auto;
+}
 .setting-row strong,
 .setting-row small,
 .toggle-row strong,
@@ -3868,6 +3860,7 @@ select {
   background: transparent;
   font-size: var(--text-lg);
   font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
   transition: background-color var(--ease), border-color var(--ease);
 }
 .editor-title-group input:hover {
@@ -3879,7 +3872,8 @@ select {
   background: var(--surface);
   box-shadow: var(--focus-ring);
 }
-.editor-title-group > * {
+/* 标题输入必须能收缩；其余附加信息（保存状态等）保持不换行 */
+.editor-title-group > *:not(input) {
   flex-shrink: 0;
 }
 .editor-title-group .save-state {
@@ -3912,6 +3906,40 @@ select {
 }
 .editor-actions button {
   white-space: nowrap;
+}
+/* 宽屏导出入口在右栏；窄屏右栏折叠后由顶栏这个按钮接管 */
+.editor-export-button {
+  display: none;
+}
+.editor-export-modal p {
+  margin: 0 0 var(--space-lg);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.editor-export-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+.editor-export-grid .secondary-button {
+  flex-direction: column;
+  gap: 2px;
+  min-height: 62px;
+  padding: var(--space-sm) var(--space-md);
+}
+.editor-export-grid strong {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.editor-export-grid small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-normal);
+}
+.editor-export-copy {
+  width: 100%;
+  margin-top: var(--space-lg);
 }
 .editor-feedback {
   position: fixed;
@@ -4434,7 +4462,7 @@ select {
   background: var(--text-muted);
   background-clip: content-box;
 }
-/* ---------- 文案阅读 / 编辑合并弹窗 ---------- */
+/* ---------- 文案编辑弹窗 ---------- */
 /* 弹窗直接框住整个编辑器：列表页留在后面不卸载，关掉就回到原来的位置。
    高度贴着遮罩的内边距走；时间轴模式也改用弹窗里的高度，不再按 100vh 算。 */
 .modal-dialog.document-overlay {
@@ -4476,7 +4504,7 @@ select {
     border-radius: 0;
   }
   /* 窄屏整页编辑器会把每个动作排成整行；弹窗里改成一行，
-     否则标题下面先被「阅读」「AI 总结」占掉两百多像素 */
+     否则标题下面先被「AI 总结」等按钮占掉两百多像素 */
   .document-overlay .editor-actions {
     display: flex;
     flex-wrap: wrap;
@@ -4918,7 +4946,7 @@ button.timecode:hover:not(:disabled) {
   background: var(--danger-soft);
 }
 
-/* 弹窗宽度三档：默认（预览）、窄（确认/作者）、宽（未来的长表单） */
+/* 弹窗宽度三档：默认（文案编辑/说明）、窄（确认/作者）、宽（未来的长表单） */
 .modal-dialog.modal-sm {
   width: min(440px, 100%);
 }
@@ -5029,7 +5057,7 @@ button.timecode:hover:not(:disabled) {
 .dropzone-overlay {
   position: fixed;
   inset: 0;
-  /* 低于弹窗（50）：预览弹窗开着时拖入文件，提示层不压在弹窗上面 */
+  /* 低于弹窗（50）：文案弹窗开着时拖入文件，提示层不压在弹窗上面 */
   z-index: 40;
   display: grid;
   place-items: center;
@@ -5300,17 +5328,18 @@ button.timecode:hover:not(:disabled) {
 @media (max-width: 760px) {
   .app-shell {
     display: block;
-    padding-bottom: 78px;
+    /* 底部导航改成两行四列，八项都在拇指可达范围内，不再横向挤成一排 */
+    padding-bottom: 124px;
   }
   .sidebar {
     position: fixed;
     z-index: 50;
     inset: auto 0 0;
     width: 100%;
-    height: 72px;
+    height: 118px;
     flex-direction: row;
     align-items: center;
-    padding: 8px 12px;
+    padding: 6px 12px;
     border: 0;
     border-top: 1px solid var(--border);
   }
@@ -5322,10 +5351,11 @@ button.timecode:hover:not(:disabled) {
   .nav-list {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-rows: 52px;
     gap: 2px;
   }
-  /* 底部栏是一行六个等宽格子，分组外壳让位：contents 之后六项仍是同级网格项 */
+  /* 底部栏是两行四格，分组外壳让位：contents 之后八项仍是同级网格项 */
   .nav-group {
     display: contents;
   }
@@ -5333,7 +5363,7 @@ button.timecode:hover:not(:disabled) {
     min-height: 50px;
     min-width: 0;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
     font-size: var(--text-2xs);
   }
   .nav-item.active {
@@ -5434,6 +5464,13 @@ button.timecode:hover:not(:disabled) {
     flex-direction: column;
     gap: 8px;
   }
+  .model-row-title h3 {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .model-tag {
+    flex: 0 0 auto;
+  }
   .model-actions button {
     flex: 1 1 auto;
   }
@@ -5519,7 +5556,7 @@ button.timecode:hover:not(:disabled) {
   .library-row .icon-button {
     width: 44px;
     height: 44px;
-    opacity: 0.75;
+    opacity: 0.9;
   }
   .mobile-only {
     display: inline;
@@ -5528,7 +5565,7 @@ button.timecode:hover:not(:disabled) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .document-row .cover-thumb,
-  /* 窄屏行首的封面与行尾的按钮都收起：整行仍可点开预览，编辑入口在弹窗里 */
+  /* 窄屏行首的封面与行尾的按钮都收起：整行仍可点开编辑器 */
   .document-actions {
     display: none;
   }
@@ -5589,6 +5626,18 @@ button.timecode:hover:not(:disabled) {
     grid-column: 3;
     justify-self: start;
   }
+  .tts-history-heading {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+  .tts-history-heading > div {
+    min-width: 0;
+  }
+  .tts-history-tools {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    gap: var(--space-xs) var(--space-lg);
+  }
   .setting-row,
   .toggle-row {
     align-items: flex-start;
@@ -5596,9 +5645,25 @@ button.timecode:hover:not(:disabled) {
     gap: 12px;
     padding: 16px 0;
   }
+  .setting-row-wide > span:first-child {
+    flex: 0 0 auto;
+  }
   .setting-control {
     width: 100%;
     justify-items: stretch;
+  }
+  .api-key-field {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+  .api-key-field input {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .api-key-field .text-button {
+    min-height: 40px;
+    align-self: flex-end;
+    white-space: nowrap;
   }
   .field-error {
     max-width: none;
@@ -5639,9 +5704,12 @@ button.timecode:hover:not(:disabled) {
     top: 12px;
     right: 12px;
   }
-  /* 窄屏只藏「复制全文」；弹窗里的「阅读」切换要留着 */
+  /* 窄屏只藏「复制全文」；弹窗里的「导出」要留着 */
   .editor-actions .editor-copy-button {
     display: none;
+  }
+  .editor-actions .editor-export-button {
+    display: inline-flex;
   }
   .editor-workspace {
     display: block;
@@ -5840,5 +5908,740 @@ body {
   from {
     opacity: 0;
     transform: translateY(6px);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   技能安装
+   一张技能卡 + 一组安装步骤；说明与文件浏览都用通用弹窗承载。
+   -------------------------------------------------------------------------- */
+
+.skill-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-3xl);
+  padding: var(--space-3xl);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.skill-card-main {
+  min-width: 0;
+}
+.skill-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-lg);
+}
+.skill-logo {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.skill-card-title {
+  min-width: 0;
+}
+.skill-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+.skill-title-row h2 {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+.skill-version {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+.skill-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  color: var(--success);
+  background: var(--success-soft);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+}
+.skill-id {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.skill-description {
+  margin: var(--space-xl) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+.skill-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-lg);
+}
+.skill-platform-note {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.skill-points {
+  display: grid;
+  gap: var(--space-sm);
+  margin: var(--space-xl) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.skill-points li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+}
+.skill-points svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--success);
+}
+.skill-card-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding-left: var(--space-3xl);
+  border-left: 1px solid var(--border);
+}
+.skill-facts {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+}
+.skill-facts > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+.skill-facts dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.skill-facts dd {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.skill-actions {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: auto;
+}
+.skill-actions .primary-button,
+.skill-actions .secondary-button {
+  width: 100%;
+}
+/* 说明与文件浏览是同一类次要动作，并排放，别再各占一整行 */
+.skill-action-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-md);
+}
+.skill-action-links .text-button {
+  min-height: 34px;
+  padding-inline: 4px;
+  color: var(--text-secondary);
+}
+.skill-safe {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: var(--space-md);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--surface-subtle);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+}
+.skill-safe svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--success);
+}
+
+/* 一键安装：把给 Agent 的提示词整段放在这里，复制即可用 */
+.skill-agent {
+  display: grid;
+  gap: var(--space-lg);
+  margin-top: var(--space-xl);
+  padding: var(--space-2xl);
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.skill-agent-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+.skill-agent-title {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+.skill-agent-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.skill-agent-title h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-strong);
+}
+.skill-agent-title p {
+  max-width: 680px;
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+/* 先给一眼能看完的流程，完整指令默认折叠，避免整块等宽文本压住页面 */
+.skill-agent-flow {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+.skill-agent-details summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+.skill-agent-details[open] summary {
+  margin-bottom: var(--space-sm);
+}
+.skill-agent-prompt {
+  max-height: 340px;
+  margin: 0;
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.skill-agent-prompt:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.skill-agent-prompt code {
+  font: inherit;
+}
+.skill-agent-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+}
+
+.skill-section {
+  margin-top: var(--space-4xl);
+}
+.skill-section > .section-heading {
+  margin-bottom: var(--space-xl);
+}
+.skill-steps {
+  display: grid;
+  gap: var(--space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.skill-steps > li {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: var(--space-lg);
+  padding: var(--space-xl);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.skill-step-index {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  color: var(--primary);
+  background: var(--primary-soft);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+}
+.skill-step-body h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+}
+.skill-step-body p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.skill-step-body p code {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-hover);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.skill-command {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+.skill-command pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-x: auto;
+}
+.skill-command code {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  /* 手机上命令常常比可用宽度长：自动折行，别把后半截藏在横向滚动里 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.skill-command .icon-button {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+}
+.skill-usage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xl);
+  margin-top: var(--space-xl);
+  padding: var(--space-xl);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+.skill-usage h3 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+}
+.skill-usage p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.skill-usage .skill-command {
+  flex: 0 1 460px;
+  margin-top: 0;
+  background: var(--surface);
+}
+.skill-requirements {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.skill-requirements > span:first-child {
+  margin-right: var(--space-2xs);
+  font-weight: var(--weight-medium);
+}
+.skill-requirement {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  background: var(--surface);
+}
+
+/* 说明弹窗里按 Markdown 结构排版，行宽交给弹窗而不是正文 */
+.skill-guide-modal .modal-body {
+  padding: 22px 26px 28px;
+}
+.skill-modal-file {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.skill-modal-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+}
+.skill-guide-body {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+.skill-guide-body h2 {
+  margin: 26px 0 10px;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+.skill-guide-body h2:first-child {
+  margin-top: 0;
+}
+.skill-guide-body h3 {
+  margin: 22px 0 8px;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+}
+.skill-guide-body h4 {
+  margin: 18px 0 6px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+}
+.skill-guide-body p {
+  margin: 0 0 12px;
+}
+.skill-guide-body a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.skill-guide-body code {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  background: var(--surface-hover);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+.skill-guide-code {
+  margin: 12px 0 16px;
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  overflow-x: auto;
+}
+.skill-guide-code code {
+  padding: 0;
+  background: none;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  /* 说明里的命令和 URL 很长，换行比横向滚动更容易照着敲 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.skill-guide-body ul,
+.skill-guide-body ol {
+  display: grid;
+  gap: 7px;
+  margin: 0 0 14px;
+  padding-left: 22px;
+}
+.skill-guide-body blockquote {
+  margin: 14px 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--primary-soft);
+}
+.skill-guide-body blockquote p {
+  margin: 0;
+  color: var(--text);
+}
+.skill-guide-body hr {
+  margin: 26px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.skill-guide-table-wrap {
+  margin: 12px 0 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.skill-guide-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+.skill-guide-body th,
+.skill-guide-body td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.skill-guide-body th {
+  color: var(--text);
+  background: var(--surface-subtle);
+  font-weight: var(--weight-strong);
+  white-space: nowrap;
+}
+.skill-guide-body tr:last-child td {
+  border-bottom: 0;
+}
+
+/* 文件浏览：左树右预览，两个窗格各自滚，弹窗本身不滚 */
+.skill-files-modal {
+  height: min(84vh, 900px);
+}
+.skill-browser {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+.skill-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  border-right: 1px solid var(--border);
+  background: var(--surface-subtle);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.skill-file-item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--text-xs);
+  text-align: left;
+}
+.skill-file-item:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.skill-file-item.active {
+  color: var(--primary);
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+.skill-file-item svg {
+  flex: 0 0 auto;
+}
+.skill-file-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skill-file-item small {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+.skill-file-preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.skill-file-preview > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.skill-file-preview > header strong {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skill-file-code {
+  flex: 1;
+  margin: 0;
+  padding: 16px 18px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.65;
+  tab-size: 4;
+  overflow: auto;
+}
+.skill-file-code code {
+  white-space: pre;
+}
+.skill-file-note {
+  margin: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--warning);
+  background: var(--warning-soft);
+  font-size: var(--text-2xs);
+}
+.skill-file-preview .form-message {
+  margin: 14px;
+}
+
+@media (max-width: 1120px) {
+  .skill-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xl);
+  }
+  .skill-card-side {
+    padding-top: var(--space-xl);
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+  .skill-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  /* 窄屏先给标题，再给操作与安全说明，最后才是展开式的详细介绍：
+     否则长描述会把「复制给 Agent」推到首屏之外。 */
+  .skill-card {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-xl);
+  }
+  .skill-card-main {
+    display: contents;
+  }
+  .skill-card-head {
+    order: 1;
+    min-width: 0;
+  }
+  .skill-card-side {
+    order: 2;
+  }
+  .skill-card-body {
+    order: 3;
+    min-width: 0;
+    margin-top: var(--space-sm);
+  }
+  .skill-section > .section-heading {
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+  .skill-agent {
+    padding: var(--space-xl);
+  }
+  .skill-agent-head .primary-button {
+    width: 100%;
+  }
+  .skill-card-head {
+    gap: var(--space-md);
+  }
+  .skill-logo {
+    width: 44px;
+    height: 44px;
+  }
+  .skill-title-row h2 {
+    font-size: var(--text-lg);
+  }
+  .skill-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .skill-steps > li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+    padding: var(--space-lg);
+  }
+  .skill-step-index {
+    width: 28px;
+    height: 28px;
+  }
+  .skill-usage {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .skill-usage .skill-command {
+    flex: 1 1 auto;
+  }
+  .skill-guide-modal .modal-body {
+    padding: 18px 18px 24px;
+  }
+  .skill-files-modal {
+    height: min(88vh, 900px);
+  }
+  .skill-browser {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 32%) minmax(0, 1fr);
+  }
+  .skill-file-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 }

@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.credentials import router as credentials_router
 from app.api.models import router as models_router
 from app.api.router import router
+from app.api.skills import router as skills_router
 from app.api.tts import router as tts_router
 from app.application import tts_jobs
 from app.application.worker import local_worker
@@ -50,6 +51,7 @@ app.include_router(router)
 app.include_router(models_router)
 app.include_router(credentials_router)
 app.include_router(tts_router)
+app.include_router(skills_router)
 
 def _find_frontend_dist() -> Path | None:
     """前端静态资源：打包版在资源目录里，开发版在仓库的 frontend/dist。"""

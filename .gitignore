@@ -23,6 +23,13 @@ build/
 *.db-shm
 *.db-wal
 .env
+# Agent 技能的本机配置（API Key / Cookie 路径，因机器而异）
+skills/*/config.json
+# 技能目录里本机放置的 FFmpeg 与运行产物，不入库
+skills/*/vendor/
+skills/*/output/
+# 旧的本地打包产物；下载请用应用里的「技能安装」页
+skills/*.zip
 
 # 打包用的第三方可执行文件（FFmpeg 等，体积大且可再获取，不入库）
 backend/vendor/
@@ -37,10 +44,9 @@ _pipcache/
 .DS_Store
 Thumbs.db
 
-# 运行日志与走查产物
+# 运行日志与走查产物，以及技能默认生成的文案
 *.log
-output/playwright/
-output/ui-redesign/
+output/
 .playwright-cli/
 
 # AI 协作过程记录：本地保留，不随仓库分发

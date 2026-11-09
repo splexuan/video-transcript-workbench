@@ -273,7 +273,7 @@ export function ModelManager() {
     <section className="panel model-manager" aria-labelledby="model-manager-title">
       <div className="section-heading">
         <div>
-          <h2 id="model-manager-title">模型管理</h2>
+          <h2 id="model-manager-title">本机模型</h2>
           <p>模型装在本机，装好之后识别与配音都不联网。</p>
         </div>
         <button className="text-button" type="button" onClick={refresh}>

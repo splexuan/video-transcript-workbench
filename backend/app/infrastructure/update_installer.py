@@ -91,6 +91,8 @@ class InstallPlan:
     executable: str
     arguments: list[str]
     health_url: str
+    # 父进程的 exe 名（不带扩展名）：等待退出前核对，避免 PID 被复用后误杀别的进程
+    parent_name: str = ""
     health_seconds: int = 45
     wait_seconds: int = 90
 
@@ -98,6 +100,7 @@ class InstallPlan:
         return {
             "version": self.version,
             "parent_pid": self.parent_pid,
+            "parent_name": self.parent_name,
             "program_dir": self.program_dir,
             "payload_dir": self.payload_dir,
             "work_dir": self.work_dir,
@@ -364,6 +367,7 @@ def build_plan(
         executable=executable,
         arguments=list(args),
         health_url=f"http://127.0.0.1:{port}/api/health",
+        parent_name=Path(sys.executable).stem,
     )
 
 
@@ -428,7 +432,10 @@ def read_install_result() -> InstallResult | None:
     status = str(payload.get("status") or "")
     if status not in {"running", "succeeded", "failed"}:
         return None
-    updated_at = float(payload.get("updated_at") or 0.0)
+    try:
+        updated_at = float(payload.get("updated_at") or 0.0)
+    except (TypeError, ValueError):
+        updated_at = 0.0
     message = str(payload.get("message") or "")
     if status == "running" and (updated_at <= 0 or time.time() - updated_at > RUNNING_STALE_SECONDS):
         status = "failed"
@@ -655,6 +662,11 @@ try {
     if ([int]$plan.parent_pid -gt 0) {
         try {
             $parent = Get-Process -Id ([int]$plan.parent_pid) -ErrorAction Stop
+            # PID 可能被系统复用：名字对不上就当作旧进程已经退出，绝不误杀
+            if (-not [string]::IsNullOrWhiteSpace([string]$plan.parent_name) -and
+                $parent.ProcessName -ne [string]$plan.parent_name) {
+                throw 'PID 已被其他进程复用'
+            }
             if (-not $parent.WaitForExit([int]$plan.wait_seconds * 1000)) {
                 Write-Log '旧进程没有按时退出，强制结束'
                 Stop-Process -Id ([int]$plan.parent_pid) -Force

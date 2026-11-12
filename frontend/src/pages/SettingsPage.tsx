@@ -657,7 +657,7 @@ export function SettingsPage() {
                   </button>
                 )}
                 <button className="secondary-button" type="button" disabled={installing} onClick={() => void revealPackage()}><FolderOpen size={16} /> 打开下载目录</button>
-                <button className="text-button" type="button" disabled={updateBusy === 'remove' || installing} onClick={() => void removePackage()}><Trash2 size={15} /> 删除安装包</button>
+                <button className="text-button" type="button" disabled={updateBusy === 'remove' || updateBusy === 'install' || installing} onClick={() => void removePackage()}><Trash2 size={15} /> 删除安装包</button>
               </div>
 
               {updates?.install_supported ? (

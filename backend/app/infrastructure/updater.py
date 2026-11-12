@@ -496,19 +496,30 @@ def _discard(path: Path) -> None:
 
 
 def package_info() -> PackageInfo | None:
-    """数据目录里已经下好的更新包（重启后仍在）。取最新那个。"""
+    """数据目录里已经下好的更新包（重启后仍在）。取比当前版本新的最新一个。
+
+    只认「比当前版本新」：从旧版升级上来时，`updates/` 里往往还留着旧版刚下载的
+    包（甚至就是当前这个版本），把它当成「新版本已经下载好」会误导用户。
+    """
 
     root = settings.updates_dir
     if not root.is_dir():
         return None
-    archives = [item for item in root.glob(f"*{ARCHIVE_SUFFIX}") if item.is_file()]
-    if not archives:
+    candidates: list[tuple[float, Path, str]] = []
+    for item in root.glob(f"*{ARCHIVE_SUFFIX}"):
+        if not item.is_file():
+            continue
+        match = FILE_VERSION_RE.search(item.name)
+        version = match.group(1) if match else ""
+        if not is_newer(version, settings.app_version):
+            continue
+        candidates.append((item.stat().st_mtime, item, version))
+    if not candidates:
         return None
-    newest = max(archives, key=lambda item: item.stat().st_mtime)
-    match = FILE_VERSION_RE.search(newest.name)
+    _, newest, version = max(candidates, key=lambda entry: entry[0])
     return PackageInfo(
         file_name=newest.name,
-        version=match.group(1) if match else "",
+        version=version,
         size=newest.stat().st_size,
         path=str(newest),
     )

@@ -192,16 +192,28 @@ def test_package_info_picks_newest_archive(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     folder = tmp_path / "updates"
     folder.mkdir()
-    older = _write_zip(folder / "creator-studio-v0.1.4-win64.zip", ["创作工作室.exe"])
-    newer = _write_zip(folder / "creator-studio-v0.2.0-win64.zip", ["创作工作室.exe"])
+    older = _write_zip(folder / "creator-studio-v0.3.0-win64.zip", ["创作工作室.exe"])
+    newer = _write_zip(folder / "creator-studio-v0.4.0-win64.zip", ["创作工作室.exe"])
     # 显式拉开 mtime：同一秒里建的两个文件靠 touch 分不出先后，用例会飘
     os.utime(older, (1_700_000_000, 1_700_000_000))
     os.utime(newer, (1_700_000_600, 1_700_000_600))
 
     package = updater.package_info()
     assert package is not None
-    assert package.version == "0.2.0"
-    assert package.file_name.endswith("v0.2.0-win64.zip")
+    assert package.version == "0.4.0"
+    assert package.file_name.endswith("v0.4.0-win64.zip")
+
+
+def test_package_info_ignores_packages_not_newer_than_current(monkeypatch, tmp_path: Path) -> None:
+    """从旧版升级后，updates/ 里残留的旧包（或当前这个版本）不该再被提示一次。"""
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    folder = tmp_path / "updates"
+    folder.mkdir()
+    _write_zip(folder / "creator-studio-v0.1.5-win64.zip", ["创作工作室.exe"])
+    _write_zip(folder / f"creator-studio-v{settings.app_version}-win64.zip", ["创作工作室.exe"])
+
+    assert updater.package_info() is None
 
 
 def test_download_without_release_is_rejected() -> None:

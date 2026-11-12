@@ -35,7 +35,7 @@ const defaults: AppSettings = { theme: 'system', default_model: '', prefer_subti
 
 /** 下载与校验都算「进行中」：这期间要持续轮询进度。 */
 function isRunning(progress: UpdateProgress | null) {
-  return progress?.status === 'pending' || progress?.status === 'running' || progress?.status === 'verifying'
+  return progress?.status === 'pending' || progress?.status === 'running' || progress?.status === 'verifying' || progress?.status === 'cancelling'
 }
 
 /** 后端给的是秒级时间戳；界面上只说「什么时候查的」。 */
@@ -273,7 +273,8 @@ export function SettingsPage() {
     try {
       const state = await api.checkUpdates()
       publish(state)
-      setUpdateMessage(state.error ?? (state.has_update || state.ignored_version ? '' : '已经是最新版本'))
+      // 结果（最新 / 已跳过 / 错误）已经由 statusText 统一说明，这里不再重复一遍。
+      setUpdateMessage('')
     } catch (reason) {
       setUpdateMessage(reason instanceof Error ? reason.message : '检查更新失败')
     } finally {

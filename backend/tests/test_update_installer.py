@@ -336,6 +336,26 @@ def _make_program(path: Path, marker: str) -> Path:
 
 
 @requires_helper
+def test_launch_helper_really_runs_script(tmp_path: Path) -> None:
+    """回归：DETACHED_PROCESS 会让 Windows PowerShell 5.1 直接退出，脚本不执行。"""
+
+    marker = tmp_path / "launched.txt"
+    script = tmp_path / "helper.ps1"
+    script.write_text(
+        "param([string]$PlanPath)\n"
+        f"Add-Content -LiteralPath '{marker.as_posix()}' -Value 'ran'\n",
+        encoding="utf-8-sig",
+    )
+    (tmp_path / "plan.json").write_text("{}", encoding="utf-8")
+
+    installer._launch_helper(script)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and not marker.is_file():
+        time.sleep(0.1)
+    assert marker.is_file(), "helper 脚本没有被执行"
+
+
+@requires_helper
 def test_helper_replaces_program_and_keeps_backup(tmp_path: Path) -> None:
     program = _make_program(tmp_path / "创作工作室", "old.txt")
     payload = _make_program(

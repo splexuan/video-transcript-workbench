@@ -389,7 +389,9 @@ def _launch_helper(script_path: Path) -> subprocess.Popen[bytes]:
     executable = powershell_executable()
     if executable is None:
         raise InstallError("系统里找不到 Windows PowerShell，无法自动替换程序目录")
-    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+    # 不能用 DETACHED_PROCESS：Windows PowerShell 5.1 没有控制台时会直接退出，
+    # 脚本根本不执行。CREATE_NO_WINDOW 同样不弹窗口，进程在父进程退出后仍能存活。
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
         subprocess, "CREATE_NEW_PROCESS_GROUP", 0
     )
     return subprocess.Popen(

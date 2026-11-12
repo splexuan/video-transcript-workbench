@@ -197,6 +197,28 @@ def test_install_supported_honours_permissions(monkeypatch, tmp_path: Path) -> N
     assert reason is not None and "不可写" in reason
 
 
+class _FakeProcess:
+    def __init__(self, code: int | None = None) -> None:
+        self.code = code
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        return self.code
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+def test_helper_started_reads_running_result(tmp_path: Path) -> None:
+    result = tmp_path / "result.json"
+    result.write_text('{"status": "running"}', encoding="utf-8")
+    assert installer._helper_started(_FakeProcess(), result, timeout=0.5) is True
+
+
+def test_helper_started_stops_when_process_exits(tmp_path: Path) -> None:
+    assert installer._helper_started(_FakeProcess(1), tmp_path / "missing.json", timeout=5) is False
+
+
 def test_start_install_extracts_and_launches_helper(monkeypatch, tmp_path: Path) -> None:
     program = tmp_path / "app"
     program.mkdir()
@@ -213,10 +235,12 @@ def test_start_install_extracts_and_launches_helper(monkeypatch, tmp_path: Path)
         installer, "extract_package", lambda *args, **kwargs: (payload, "app.exe")
     )
 
-    def launch(script: Path) -> None:
+    def launch(script: Path) -> _FakeProcess:
         launched["script"] = script
+        return _FakeProcess()
 
     monkeypatch.setattr(installer, "_launch_helper", launch)
+    monkeypatch.setattr(installer, "_helper_started", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         lifecycle,
         "request_shutdown",
@@ -239,6 +263,43 @@ def test_start_install_extracts_and_launches_helper(monkeypatch, tmp_path: Path)
     plan = json.loads((script.parent / installer.PLAN_FILE_NAME).read_text(encoding="utf-8"))
     assert plan["payload_dir"] == str(payload)
     assert plan["version"] == "9.9.9"
+
+
+def test_start_install_keeps_app_when_helper_never_starts(monkeypatch, tmp_path: Path) -> None:
+    """脚本没报到时必须保留当前进程，不能先退出再让用户对着空目录。"""
+
+    program = tmp_path / "app"
+    program.mkdir()
+    package = tmp_path / "update.zip"
+    package.write_bytes(b"not a real zip")
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    helper = _FakeProcess()
+    shutdown: list[float] = []
+
+    monkeypatch.setattr(installer, "packaged", lambda: True)
+    monkeypatch.setattr(installer, "program_dir", lambda: program)
+    monkeypatch.setattr(installer, "install_supported", lambda: (True, None))
+    monkeypatch.setattr(
+        installer, "extract_package", lambda *args, **kwargs: (payload, "app.exe")
+    )
+    monkeypatch.setattr(installer, "_launch_helper", lambda _script: helper)
+    monkeypatch.setattr(installer, "_helper_started", lambda *args, **kwargs: False)
+    monkeypatch.setattr(lifecycle, "request_shutdown", lambda delay=0.0: shutdown.append(delay))
+
+    installer.start_install(package, "9.9.9")
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        progress = installer.install_progress()
+        if progress is not None and progress.status == "failed":
+            break
+        time.sleep(0.02)
+
+    progress = installer.install_progress()
+    assert progress is not None and progress.status == "failed", progress
+    assert progress.error and "脚本" in progress.error
+    assert helper.terminated is True
+    assert shutdown == []
 
 
 # ---------------------------------------------------------------- API

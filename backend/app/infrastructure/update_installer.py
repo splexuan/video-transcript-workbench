@@ -412,6 +412,30 @@ def _launch_helper(script_path: Path) -> subprocess.Popen[bytes]:
     )
 
 
+def _helper_started(
+    process: subprocess.Popen[bytes], result_path: Path, timeout: float = 10.0
+) -> bool:
+    """等脚本写下第一条 running 结果，确认它真的跑起来了。
+
+    脚本启动失败时（执行策略、杀毒软件、系统异常）Popen 仍可能成功返回。
+    这时如果直接让本进程退出，用户就会剩下一个没有界面的目录；所以先等
+    10 秒，脚本没报到就保留当前进程并报错。
+    """
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8-sig"))
+            if isinstance(payload, dict) and payload.get("status") == "running":
+                return True
+        except (OSError, ValueError):
+            pass
+        if process.poll() is not None:
+            return False
+        time.sleep(0.15)
+    return False
+
+
 def _result_path() -> Path | None:
     directory = program_dir()
     if directory is None:
@@ -531,13 +555,20 @@ def _run_install(task: _Task, package_path: Path, version: str) -> None:
         )
         script = write_plan_files(plan)
         # 旧结果先清掉：新一次尝试开始后，界面不该还挂着上一次的成功/失败
-        (work / RESULT_FILE_NAME).unlink(missing_ok=True)
+        result_path = work / RESULT_FILE_NAME
+        result_path.unlink(missing_ok=True)
         task.report(
             status="launching",
             percent=100,
             message="正在退出并替换程序，稍后会自动重启",
         )
-        _launch_helper(script)
+        helper = _launch_helper(script)
+        if not _helper_started(helper, result_path):
+            try:
+                helper.terminate()
+            except OSError:
+                pass
+            raise InstallError("更新脚本没能启动，请重试或手动解压更新包")
         # 先把响应和页面提示送出去，再让服务收尾；脚本会等待本进程退出
         lifecycle.request_shutdown(delay=1.0)
     except Exception as exc:  # noqa: BLE001 任何失败都落到进度里，界面能重试

@@ -2,7 +2,9 @@
 
 本地优先的 Windows 内容创作工作室。核心能力是把视频链接或本地音视频转换为可编辑、可校对的文案，并支持语音合成。音视频、平台凭据与文案全程保留在本机。
 
-当前版本：`0.1.5` · 运行平台：Windows 10 / 11 64 位 · 许可证：[MIT](LICENSE)
+当前版本：`0.2.0` · 运行平台：Windows 10 / 11 64 位 · 许可证：[MIT](LICENSE)
+
+> 本项目的前身是 v0.1.x 的「文案工作台」（旧仓库 [video-transcript-workbench](https://github.com/splexuan/video-transcript-workbench)）。v0.2.0 起改名为「创作工作室」，**数据目录保持不变**：旧版的文案、模型与平台授权会直接沿用。
 
 ## 功能概览
 
@@ -72,7 +74,16 @@
 - 压缩包已包含 Python 运行时与 FFmpeg，无需安装环境，也无需管理员权限。
 - 首次使用需在「模型管理」页下载一个语音识别模型（数百 MB 到 1 GB，仅需一次）。
 - 提取平台视频前，需按平台要求完成授权配置（快手免登录）。
-- 更新版本时退出程序，用新包覆盖原程序目录即可。文案、模型与凭据位于数据目录，不受覆盖影响。
+- 更新版本可在「设置 → 关于与更新」里检查并下载；下载完成后退出程序，把压缩包解压到新的程序目录即可。文案、模型与凭据位于数据目录，不受程序目录变化影响。
+
+### 从旧版（v0.1.x「文案工作台」）升级
+
+1. 可以直接在旧版的「设置 → 关于与更新」里检查更新，也可以手动下载 `creator-studio-v0.2.0-win64.zip`。
+2. 退出旧版程序，把新包解压到**新的程序目录**（不要解压进旧的 `文案工作台` 目录内部）。
+3. 双击新目录里的 `创作工作室.exe`。首次启动会自动补齐数据库的新列与新表，旧文案、任务记录、模型、平台凭据都会沿用，无需重新下载或登录。
+4. 确认新版可用后，旧版程序目录可以删除。程序目录名变了，桌面快捷方式需要重建。
+
+> 数据目录默认是 `%LOCALAPPDATA%\VideoTranscriptWorkbench`，新版没有改名；这是刻意的兼容约定。
 
 ### 开发启动
 
@@ -245,7 +256,7 @@ release\creator-studio-v<版本>-win64.zip.sha256
 - `frontend/package.json` 的 `version`
 - `frontend/package-lock.json` 中的版本字段（由 `npm install` 自动同步）
 
-程序不联网检查新版本，更新方式为解压覆盖程序目录。
+程序通过 GitHub Releases 检查新版本：可以在「设置 → 关于与更新」里手动检查，也可以关闭启动时的自动检查。默认仓库为 `splexuan/video-transcript-workbench`，可用 `VTW_UPDATE_REPO` / `VTW_UPDATE_API_BASE` 覆盖。程序只负责下载压缩包，解压替换由用户完成（正在运行的 exe 无法被覆盖）。
 
 ## 配置
 
@@ -260,6 +271,7 @@ VideoTranscriptWorkbench\
 ├── credentials\      平台凭据（DPAPI 加密）
 ├── inbox\            导入的原始文件
 ├── work\             处理中的临时文件
+├── updates\          下载好的新版本压缩包
 └── logs\             打包版运行日志
 ```
 
@@ -277,6 +289,8 @@ VideoTranscriptWorkbench\
 | `VTW_WHISPER_COMPUTE_TYPE` | 精准识别计算精度，默认 `int8` |
 | `VTW_WHISPER_BEAM_SIZE` | 精准识别 beam size，默认 `5` |
 | `VTW_WHISPER_VAD` | 设为 `true` 开启 VAD 预处理 |
+| `VTW_UPDATE_API_BASE` | 版本更新 API 根地址，默认 `https://api.github.com` |
+| `VTW_UPDATE_REPO` | 版本更新仓库，默认 `splexuan/video-transcript-workbench` |
 | `VTW_NO_PAUSE` | 设为 `1` 时脚本出错不暂停等待 |
 
 ## API
@@ -299,12 +313,13 @@ VideoTranscriptWorkbench\
 | `/api/connectors` | 平台连接状态 |
 | `/api/skills` | 独立技能包列表、文件预览与 ZIP 下载 |
 | `/api/settings` | 应用设置 |
+| `/api/updates` | 版本检查、更新包下载与打开目录 |
 | `/api/health` | 健康检查 |
 
 ## 项目结构
 
 ```text
-creator-studio\
+video-transcript-workbench\
 ├── assets\                     图标与界面截图
 ├── backend\
 │   ├── app\

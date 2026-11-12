@@ -16,7 +16,7 @@ dist/
 build/
 *.spec
 # 打包配置是项目文件，需要入库
-!backend/文案工作台.spec
+!backend/创作工作室.spec
 
 # 数据库与本地配置
 *.db
@@ -59,10 +59,6 @@ task_plan.md
 docs/
 
 .tmp/
-
-# 发行包输出目录：build.bat / build_release.py 生成的 zip 落在这里
-release/
-
 
 # 发行包输出目录：build.bat / build_release.py 生成的 zip 落在这里
 release/

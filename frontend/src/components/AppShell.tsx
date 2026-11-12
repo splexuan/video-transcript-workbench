@@ -17,7 +17,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { api } from '../lib/api'
 import { useScrollMemory } from '../lib/scrollMemory'
-import type { AppSettings } from '../types'
+import type { AppSettings, UpdateState } from '../types'
 
 /**
  * 导航分四组：上面三个是每天都要走的「提取 → 校对 → 看进度」，
@@ -97,9 +97,9 @@ export function AppShell() {
   const navigate = useNavigate()
   const { pathname, search } = useLocation()
   const [mode, setMode] = useState<ThemeMode>(cachedMode)
-  // 版本号来自 /api/health（最稳的一个接口）。程序不自带更新检查：
-  // 发行包由人工分发，换版本靠解压覆盖，界面只如实显示当前是哪个版本。
+  // 版本号来自 /api/health（最稳的一个接口）；更新提示来自 /api/updates。
   const [version, setVersion] = useState('')
+  const [update, setUpdate] = useState<UpdateState | null>(null)
 
   // 滚动位置跟着 location 走：进编辑页改完一条再回来，停在原来那一行而不是被弹回页首。
   // 之前是每次换页都强制回顶，从长列表离开一次，位置就白丢了。
@@ -154,6 +154,30 @@ export function AppShell() {
     return () => {
       active = false
     }
+  }, [])
+
+  // 版本状态：后端按设置节流，正常打开页面不会每次都打远程。
+  useEffect(() => {
+    let active = true
+    api
+      .updates()
+      .then((state) => {
+        if (active) setUpdate(state)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // 设置页检查/下载后广播状态，侧栏的版本提示跟着变，不用各查一次。
+  useEffect(() => {
+    const sync = (event: Event) => {
+      const detail = (event as CustomEvent<UpdateState>).detail
+      if (detail) setUpdate(detail)
+    }
+    window.addEventListener('vtw:updates', sync)
+    return () => window.removeEventListener('vtw:updates', sync)
   }, [])
 
   const dark = resolveTheme(mode) === 'dark'
@@ -243,6 +267,18 @@ export function AppShell() {
               </span>
             </button>
           </div>
+          {/* 只有真有新版本时才多出这一行提示，平时页脚保持两行结构 */}
+          {update?.has_update && update.latest && (
+            <button
+              className="update-note"
+              type="button"
+              onClick={() => navigate('/settings')}
+              title={`新版本 v${update.latest.version} 已发布，点击到设置页查看`}
+            >
+              <span className="status-dot ready" aria-hidden="true" />
+              新版本 v{update.latest.version}
+            </button>
+          )}
         </div>
       </aside>
       <main className="main-content" id="main-content">

@@ -230,6 +230,9 @@ class SettingPatch(BaseModel):
     # 「语音合成」默认用的模型与音色（音色 id 是 ZipVoice 的参考音频标识）；留空用引擎默认
     tts_model: str | None = Field(default=None, max_length=64)
     tts_voice: str | None = Field(default=None, max_length=64)
+    # 版本更新：启动时自动检查；ignored_version 是用户点过「跳过此版本」的版本号
+    auto_check_update: bool | None = None
+    ignored_version: str | None = Field(default=None, max_length=32)
 
 
 class TtsVoiceItem(BaseModel):
@@ -473,3 +476,64 @@ class SkillFileContentRead(BaseModel):
     path: str
     content: str
     truncated: bool
+
+
+# ---------------------------------------------------------------- 版本更新
+
+
+class UpdateAssetRead(BaseModel):
+    """Release 里的下载资产：只挑 Windows 免安装包（zip）。"""
+
+    name: str
+    size: int
+    url: str
+
+
+class UpdateReleaseRead(BaseModel):
+    version: str
+    tag: str
+    name: str
+    # Release 正文（markdown 原文），由界面自行截断展示
+    notes: str
+    published_at: str
+    page_url: str
+    asset: UpdateAssetRead | None = None
+
+
+class UpdateProgressRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    version: str
+    file_name: str
+    status: str
+    percent: int
+    downloaded_bytes: int
+    total_bytes: int
+    path: str
+    message: str
+    error: str | None = None
+    updated_at: float
+
+
+class UpdatePackageRead(BaseModel):
+    """已经下载到本机的更新包；重启程序后依然在。"""
+
+    file_name: str
+    version: str
+    size: int
+    path: str
+
+
+class UpdateStateRead(BaseModel):
+    current_version: str
+    # 打包版才谈得上「替换程序目录」；开发模式只展示版本与提示
+    packaged: bool
+    latest: UpdateReleaseRead | None = None
+    # 已经按 ignored_version 过滤过的结论：界面直接用它决定要不要提示
+    has_update: bool = False
+    ignored_version: str = ""
+    checked_at: float | None = None
+    error: str | None = None
+    auto_check: bool = True
+    download: UpdateProgressRead | None = None
+    package: UpdatePackageRead | None = None

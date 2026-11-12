@@ -60,6 +60,10 @@ DEFAULT_SETTINGS = {
     # 「语音合成」默认使用的模型与音色（音色是 ZipVoice 参考音频的 id）；留空表示用引擎默认值。
     "tts_model": "",
     "tts_voice": "",
+    # 启动时自动查一次新版本（受 update_check_interval_hours 节流）
+    "auto_check_update": "true",
+    # 用户点过「跳过此版本」的版本号；只影响提示，不影响检查结果本身
+    "ignored_version": "",
 }
 
 # 兜底解析（第三方聚合接口）的 Key 设置项：只写不读，明文不出后端
@@ -1126,6 +1130,8 @@ def read_settings(session: Session) -> dict[str, str | bool | int | None]:
         # 语音合成：模型与音色都留空跟随引擎默认；音色 id 是字符串，读出来原样返回
         "tts_model": merged["tts_model"],
         "tts_voice": _text_setting(merged["tts_voice"]),
+        "auto_check_update": merged["auto_check_update"] == "true",
+        "ignored_version": merged["ignored_version"],
     }
 
 

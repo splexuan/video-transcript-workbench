@@ -11,6 +11,7 @@ from app.api.models import router as models_router
 from app.api.router import router
 from app.api.skills import router as skills_router
 from app.api.tts import router as tts_router
+from app.api.updates import router as updates_router
 from app.application import tts_jobs
 from app.application.worker import local_worker
 from app.config import settings
@@ -52,6 +53,7 @@ app.include_router(models_router)
 app.include_router(credentials_router)
 app.include_router(tts_router)
 app.include_router(skills_router)
+app.include_router(updates_router)
 
 def _find_frontend_dist() -> Path | None:
     """前端静态资源：打包版在资源目录里，开发版在仓库的 frontend/dist。"""

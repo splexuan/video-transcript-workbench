@@ -25,6 +25,7 @@ import type {
   TtsTranscribeResult,
   TtsVoice,
   TtsVoiceEditResult,
+  UpdateInstall,
   UpdateProgress,
   UpdateState,
 } from '../types'
@@ -194,6 +195,8 @@ export const api = {
   checkUpdates: () => request<UpdateState>('/api/updates/check', { method: 'POST' }),
   downloadUpdate: () => request<UpdateProgress>('/api/updates/download', { method: 'POST' }),
   cancelUpdateDownload: () => request<UpdateProgress>('/api/updates/cancel', { method: 'POST' }),
+  /** 解压并安排替换；接口返回后程序会退出、自动重启。 */
+  installUpdate: () => request<UpdateInstall>('/api/updates/install', { method: 'POST' }),
   deleteUpdatePackage: () =>
     request<{ removed: boolean }>('/api/updates/package', { method: 'DELETE' }),
   /** 在资源管理器里打开更新包所在目录。 */

@@ -1,11 +1,12 @@
-"""版本与更新接口：看版本、检查新版本、下载新版压缩包。
+"""版本与更新接口：看版本、检查新版本、下载并自动替换。
 
-这里只提供「检查 + 下载 + 打开目录」：替换程序目录由用户手动完成（原因见
-`app/infrastructure/updater.py` 顶部说明）。
+下载只负责把包取到数据目录；真正替换程序目录由 `update_installer` 完成：
+它解压、启动一个在进程退出后才动手的 PowerShell 脚本，失败会自动回滚。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,11 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.application.services import read_settings
 from app.config import settings
-from app.infrastructure import updater
+from app.infrastructure import update_installer, updater
 from app.infrastructure.database import get_session
 from app.infrastructure.desktop import open_path
 from app.schemas import (
     UpdateAssetRead,
+    UpdateInstallRead,
+    UpdateInstallResultRead,
     UpdatePackageRead,
     UpdateProgressRead,
     UpdateReleaseRead,
@@ -52,6 +55,16 @@ def _package_read(package: updater.PackageInfo) -> UpdatePackageRead:
     )
 
 
+def _install_result_read(result: update_installer.InstallResult) -> UpdateInstallResultRead:
+    return UpdateInstallResultRead(
+        status=result.status,
+        message=result.message,
+        version=result.version,
+        updated_at=result.updated_at,
+        log_path=result.log_path,
+    )
+
+
 def _state(session: Session, *, force: bool) -> UpdateStateRead:
     """组装界面要的完整状态。
 
@@ -73,7 +86,17 @@ def _state(session: Session, *, force: bool) -> UpdateStateRead:
         and latest.version != ignored
     )
     progress = updater.download_progress()
+    install = update_installer.install_progress()
     package = updater.package_info()
+    supported, reason = update_installer.install_supported()
+    last_install = update_installer.read_install_result()
+    # 失败结果只对「还没升到那个版本」的用户有意义；后来手动升上去了就别再吓人
+    if (
+        last_install is not None
+        and last_install.status == "failed"
+        and not updater.is_newer(last_install.version, settings.app_version)
+    ):
+        last_install = None
     return UpdateStateRead(
         current_version=settings.app_version,
         packaged=updater.packaged(),
@@ -85,6 +108,10 @@ def _state(session: Session, *, force: bool) -> UpdateStateRead:
         auto_check=auto_check,
         download=None if progress is None else UpdateProgressRead.model_validate(progress),
         package=None if package is None else _package_read(package),
+        install_supported=supported,
+        install_reason=reason,
+        install=None if install is None else UpdateInstallRead.model_validate(install),
+        last_install=None if last_install is None else _install_result_read(last_install),
     )
 
 
@@ -124,6 +151,21 @@ def cancel_download() -> updater.DownloadProgress:
 @router.delete("/package")
 def delete_package() -> dict[str, bool]:
     return {"removed": updater.remove_package()}
+
+
+@router.post("/install", response_model=UpdateInstallRead)
+def install_update() -> update_installer.InstallProgress:
+    """解压下载好的包并安排替换；接口返回后进程会退出并自动重启。"""
+
+    package = updater.package_info()
+    if package is None:
+        raise HTTPException(status_code=409, detail="还没有下载好更新包，请先下载")
+    try:
+        return update_installer.start_install(Path(package.path), package.version)
+    except update_installer.InstallBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except update_installer.InstallError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/reveal")

@@ -26,7 +26,7 @@ def default_data_dir() -> Path:
 
 class Settings(BaseSettings):
     app_name: str = "创作工作室"
-    app_version: str = "0.2.0"
+    app_version: str = "0.2.1"
     data_dir: Path = default_data_dir()
     worker_enabled: bool = True
     upload_max_mb: int = 4096
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
 
     @property
     def updates_dir(self) -> Path:
-        """下载好的新版本压缩包放这里；替换程序目录由用户手动完成。"""
+        """下载好的新版本压缩包放这里；解压与替换在程序目录旁边进行。"""
 
         return self.data_dir / "updates"
 

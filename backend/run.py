@@ -26,6 +26,7 @@ from pathlib import Path
 import uvicorn
 
 from app.config import settings
+from app.infrastructure import lifecycle
 from app.infrastructure.desktop import open_path
 from app.main import app
 
@@ -129,7 +130,7 @@ def tray_image() -> object:
         return None
 
 
-def run_tray(server: uvicorn.Server, base_url: str) -> bool:
+def run_tray(server: uvicorn.Server, base_url: str, holder: dict[str, object]) -> bool:
     """常驻系统托盘，阻塞到用户选择「退出」。
 
     没有 pystray（开发环境常见）时返回 False，由调用方退回前台阻塞模式。
@@ -159,9 +160,13 @@ def run_tray(server: uvicorn.Server, base_url: str) -> bool:
         pystray.MenuItem("退出", quit_app),
     )
     icon = pystray.Icon(APP_NAME, tray_image(), APP_NAME, menu)
+    # 接口触发的自动更新要让托盘循环也停下来：主线程正阻塞在 icon.run()，
+    # 只设 server.should_exit 进程不会退出。把它交给 lifecycle 的回调。
+    holder["stop"] = icon.stop
     # 用 print 而不是 logger：打包版没有控制台时它同样落在日志文件里，便于排查
     print(f"已常驻系统托盘：{base_url}")
     icon.run()
+    holder.pop("stop", None)
     return True
 
 
@@ -191,10 +196,21 @@ def main(argv: list[str] | None = None) -> int:
     thread.start()
     print(f"{APP_NAME} 正在启动：{base_url}")
 
+    # 自动更新接口请求退出时走这里：先停服务，再停托盘消息循环（如果开着）。
+    tray_holder: dict[str, object] = {}
+
+    def shutdown() -> None:
+        server.should_exit = True
+        stop = tray_holder.get("stop")
+        if callable(stop):
+            stop()
+
+    lifecycle.register_shutdown(shutdown)
+
     if not args.no_browser:
         threading.Thread(target=open_when_ready, args=(base_url,), daemon=True).start()
 
-    if not args.no_tray and run_tray(server, base_url):
+    if not args.no_tray and run_tray(server, base_url, tray_holder):
         # 托盘退出后给 uvicorn 一点时间收尾
         thread.join(timeout=5)
         return 0

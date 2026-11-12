@@ -257,6 +257,25 @@ export interface UpdatePackage {
   path: string
 }
 
+/** 自动替换的进度：解压完成后程序会退出并重启，界面最后看到的是 launching。 */
+export interface UpdateInstall {
+  version: string
+  status: 'pending' | 'extracting' | 'launching' | 'failed'
+  percent: number
+  message: string
+  error: string | null
+  updated_at: number
+}
+
+/** 上一次自动替换的结果，由退出后的脚本写入。 */
+export interface UpdateInstallResult {
+  status: 'running' | 'succeeded' | 'failed'
+  message: string
+  version: string
+  updated_at: number
+  log_path: string
+}
+
 export interface UpdateState {
   current_version: string
   /** 打包版才谈得上替换程序目录；开发模式只展示版本与提示。 */
@@ -270,6 +289,11 @@ export interface UpdateState {
   auto_check: boolean
   download: UpdateProgress | null
   package: UpdatePackage | null
+  /** 当前程序目录能否自动替换；不能时 install_reason 说明原因。 */
+  install_supported: boolean
+  install_reason: string | null
+  install: UpdateInstall | null
+  last_install: UpdateInstallResult | null
 }
 
 /* ---------- 语音合成 ---------- */

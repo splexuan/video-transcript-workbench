@@ -528,6 +528,17 @@ button:disabled {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
+.update-status.error {
+  color: var(--danger);
+}
+/* 自动更新失败时的日志位置：路径很长，允许在任意字符处换行 */
+.update-log-path {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  word-break: break-all;
+}
 .update-package {
   display: grid;
   gap: 12px;

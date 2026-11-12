@@ -524,6 +524,29 @@ class UpdatePackageRead(BaseModel):
     path: str
 
 
+class UpdateInstallRead(BaseModel):
+    """自动替换的进度快照：解压完成后进程就会退出，界面最后看到的是 launching。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    version: str
+    status: str
+    percent: int
+    message: str
+    error: str | None = None
+    updated_at: float
+
+
+class UpdateInstallResultRead(BaseModel):
+    """上一次自动替换的结果（由退出后的 PowerShell 脚本写入）。"""
+
+    status: str
+    message: str
+    version: str
+    updated_at: float
+    log_path: str
+
+
 class UpdateStateRead(BaseModel):
     current_version: str
     # 打包版才谈得上「替换程序目录」；开发模式只展示版本与提示
@@ -537,3 +560,8 @@ class UpdateStateRead(BaseModel):
     auto_check: bool = True
     download: UpdateProgressRead | None = None
     package: UpdatePackageRead | None = None
+    # 能否在当前程序目录里自动替换；不能时 install_reason 说明怎么办
+    install_supported: bool = False
+    install_reason: str | None = None
+    install: UpdateInstallRead | None = None
+    last_install: UpdateInstallResultRead | None = None

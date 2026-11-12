@@ -86,9 +86,12 @@ export function SettingsPage() {
   const [notesOpen, setNotesOpen] = useState(false)
   const [updateBusy, setUpdateBusy] = useState('')
   const [updateMessage, setUpdateMessage] = useState('')
+  const [installMessage, setInstallMessage] = useState('')
 
   const download = updates?.download ?? null
   const running = isRunning(download)
+  const install = updates?.install ?? null
+  const installing = install?.status === 'pending' || install?.status === 'extracting' || install?.status === 'launching'
   // 下好的包以服务端的目录扫描为准：重开程序之后它还在
   const packageFile: UpdatePackage | null = updates?.package ?? null
   // 没有「发现新版本」块时的状态行；没有可说的内容时整行不渲染
@@ -209,14 +212,14 @@ export function SettingsPage() {
     }
   }, [publish])
 
-  // 下载中轮询进度；依赖布尔值，保证定时器在轮询期间保持稳定。
+  // 下载或解压替换进行中都要持续轮询；替换开始后服务会退出，轮询失败就停在最后一条进度上。
   useEffect(() => {
-    if (!running) return
+    if (!running && !installing) return
     const timer = window.setInterval(() => {
       void reloadUpdates().catch(() => undefined)
     }, 1200)
     return () => window.clearInterval(timer)
-  }, [running, reloadUpdates])
+  }, [running, installing, reloadUpdates])
 
   useEffect(() => {
     let active = true
@@ -315,6 +318,28 @@ export function SettingsPage() {
       await reloadUpdates()
     } catch (reason) {
       setUpdateMessage(reason instanceof Error ? reason.message : '取消失败')
+    } finally {
+      setUpdateBusy('')
+    }
+  }
+
+  /**
+   * 自动替换：后端解压后会请求进程退出，脚本在进程结束后备份旧目录、换上新目录、
+   * 再启动新版本；失败会自动回滚。这里只负责发起，页面随服务退出而断开。
+   */
+  async function startInstall() {
+    if (!packageFile || installing) return
+    const confirmed = window.confirm(
+      `将退出当前程序，自动替换为 v${packageFile.version} 后重新启动。正在识别的任务会被中断。继续吗？`,
+    )
+    if (!confirmed) return
+    setUpdateBusy('install')
+    setInstallMessage('')
+    try {
+      await api.installUpdate()
+      await reloadUpdates()
+    } catch (reason) {
+      setInstallMessage(reason instanceof Error ? reason.message : '启动自动更新失败')
     } finally {
       setUpdateBusy('')
     }
@@ -591,20 +616,63 @@ export function SettingsPage() {
             )
           )}
 
+          {updates?.last_install && updates.last_install.status !== 'succeeded' && (
+            <p className={updates.last_install.status === 'failed' ? 'update-status error' : 'update-status'} role="status">
+              {updates.last_install.status === 'running'
+                ? `正在完成 v${updates.last_install.version} 的自动更新…`
+                : `上次自动更新失败：${updates.last_install.message}`}
+              {updates.last_install.status === 'failed' && (
+                <small className="update-log-path">日志：{updates.last_install.log_path}</small>
+              )}
+            </p>
+          )}
+
           {packageFile && (
             <div className="update-package">
               <span>
                 <strong>新版本已经下载到本机</strong>
                 <small>{packageFile.file_name} · {formatBytes(packageFile.size)}</small>
               </span>
+
+              {install && (installing || install.status === 'failed') && (
+                <div className="update-progress" role="status" aria-live="polite">
+                  <ProgressBar value={install.percent} minPercent={2} label="更新安装进度" />
+                  <div className="update-progress-meta">
+                    <span>{install.error ?? install.message}</span>
+                    <span>{installing ? `${install.percent}%` : ''}</span>
+                  </div>
+                </div>
+              )}
+
               <div className="update-actions">
-                <button className="secondary-button" type="button" onClick={() => void revealPackage()}><FolderOpen size={16} /> 打开下载目录</button>
-                <button className="text-button" type="button" disabled={updateBusy === 'remove'} onClick={() => void removePackage()}><Trash2 size={15} /> 删除安装包</button>
+                {!installing && updates?.install_supported && (
+                  <button className="primary-button" type="button" disabled={updateBusy === 'install'} onClick={() => void startInstall()}>
+                    {updateBusy === 'install' ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}
+                    {updateBusy === 'install' ? '正在准备' : '立即更新并重启'}
+                  </button>
+                )}
+                {installing && (
+                  <button className="primary-button" type="button" disabled>
+                    <LoaderCircle className="spin" size={16} /> 正在准备更新
+                  </button>
+                )}
+                <button className="secondary-button" type="button" disabled={installing} onClick={() => void revealPackage()}><FolderOpen size={16} /> 打开下载目录</button>
+                <button className="text-button" type="button" disabled={updateBusy === 'remove' || installing} onClick={() => void removePackage()}><Trash2 size={15} /> 删除安装包</button>
               </div>
-              <p className="field-hint">
-                关闭工作台后，把压缩包解压到新的程序目录即可完成更新（新版目录名是「创作工作室」）。
-                文案、模型与平台凭据都在数据目录里，换程序目录不会丢；旧版「文案工作台」的数据会被直接沿用。也可以直接到发布页下载新版。
-              </p>
+
+              {updates?.install_supported ? (
+                <p className="field-hint">
+                  点击后程序会自动退出，把当前程序目录备份一份、替换成新版本并重新启动；新版本启动失败会自动回滚。
+                  正在识别的任务会被中断，建议先等任务结束。
+                </p>
+              ) : (
+                <p className="field-hint">
+                  {updates?.install_reason ?? '当前程序目录不能自动替换。'}
+                  也可以手动解压：关闭工作台后把压缩包解压到新的程序目录（新版目录名是「创作工作室」）。
+                  文案、模型与平台凭据都在数据目录里，换程序目录不会丢；旧版「文案工作台」的数据会被直接沿用。
+                </p>
+              )}
+              {installMessage && <p className="update-status error" role="alert">{installMessage}</p>}
             </div>
           )}
 
